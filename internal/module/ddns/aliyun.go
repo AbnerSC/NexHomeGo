@@ -1,6 +1,7 @@
 package ddns
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -472,8 +473,12 @@ func httpJSON(method, rawURL string, headers map[string]string) (map[string]inte
 	if resp.StatusCode != 200 {
 		return nil, apiError(resp.StatusCode, string(body))
 	}
+	// UseNumber：数字保留原始字面量（json.Number），等价 Gson 的精确数值承载——
+	// ESA RecordId/ConfigId/SiteId 可达 18 位，float64 在 2^53 以上会丢精度（更新写回错误 id）
 	var out map[string]interface{}
-	if err := json.Unmarshal(body, &out); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.UseNumber()
+	if err := dec.Decode(&out); err != nil {
 		return nil, fmt.Errorf("阿里云响应不是合法 JSON 对象: %s", err.Error())
 	}
 	return out, nil
@@ -544,14 +549,20 @@ func strAtIfPresent(m map[string]interface{}, k string) string {
 	return strAt(m, k)
 }
 
-// numAt 数值取值（JSON 数字统一为 float64），键缺失/非数值返回 ok=false。
+// numAt 数值取值（UseNumber 下为 json.Number，测试构造可为 float64），键缺失/非数值返回 ok=false。
 func numAt(m map[string]interface{}, k string) (float64, bool) {
 	v, ok := m[k]
 	if !ok || v == nil {
 		return 0, false
 	}
-	f, ok := v.(float64)
-	return f, ok
+	switch x := v.(type) {
+	case json.Number:
+		f, err := x.Float64()
+		return f, err == nil
+	case float64:
+		return x, true
+	}
+	return 0, false
 }
 
 func arrAt(m map[string]interface{}, k string) []map[string]interface{} {
@@ -579,6 +590,8 @@ func jsonValueToString(v interface{}) string {
 	switch x := v.(type) {
 	case string:
 		return x
+	case json.Number:
+		return x.String() // 原始字面量精确无损（整数不带小数点，对齐 Gson getAsString）
 	case float64:
 		if x == float64(int64(x)) {
 			return strconv.FormatInt(int64(x), 10)

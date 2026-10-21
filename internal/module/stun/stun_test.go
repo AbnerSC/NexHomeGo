@@ -371,3 +371,39 @@ func TestIsPublicIp(t *testing.T) {
 		}
 	}
 }
+
+// ==================== 大整数 ID 精度（UseNumber 语义） ====================
+
+// TestEsaBigNumberPrecision ESA RecordId/ConfigId 可达 18 位，响应层 json.Number 必须
+// 按原始字面量精确取值（等价 Gson getAsLong/getAsString），不可经 float64 丢精度
+func TestEsaBigNumberPrecision(t *testing.T) {
+	var o map[string]interface{}
+	dec := json.NewDecoder(strings.NewReader(`{"RecordId":9123456789012345678,"Ttl":120,"Proxied":true}`))
+	dec.UseNumber()
+	if err := dec.Decode(&o); err != nil {
+		t.Fatal(err)
+	}
+	if got := esaLong(o, "RecordId"); got != 9123456789012345678 {
+		t.Errorf("esaLong=%d", got)
+	}
+	if got := esaInt(o, "Ttl", 1); got != 120 {
+		t.Errorf("esaInt Ttl=%d", got)
+	}
+	if got := esaStr(o, "RecordId"); got != "9123456789012345678" {
+		t.Errorf("esaStr=%q", got)
+	}
+	if !core.BodyBool(o, "Proxied", false) {
+		t.Error("Proxied 应为 true")
+	}
+	if got := esaInt(o, "Missing", 1); got != 1 {
+		t.Errorf("缺失键应回退默认值，got %d", got)
+	}
+}
+
+// TestParseEsaPickedBigID 勾选快照 JSON 里的大整数 id 必须无损解析
+func TestParseEsaPickedBigID(t *testing.T) {
+	picked := parseEsaPicked(`[{"id":9123456789012345678,"name":"a.edge.test"}]`)
+	if len(picked) != 1 || picked[0].id != 9123456789012345678 || picked[0].name != "a.edge.test" {
+		t.Errorf("解析错误: %+v", picked)
+	}
+}

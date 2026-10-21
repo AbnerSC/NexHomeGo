@@ -109,6 +109,29 @@ func TestJSONAccessors(t *testing.T) {
 	}
 }
 
+// TestBigNumberPrecision 大整数精度（httpJSON UseNumber 语义）：ESA RecordId/SiteId 超过 2^53
+// 时必须按原始字面量精确取值，等价 Gson getAsLong/getAsString，不可经 float64 丢精度
+func TestBigNumberPrecision(t *testing.T) {
+	var m map[string]interface{}
+	dec := json.NewDecoder(strings.NewReader(`{"RecordId":9123456789012345678,"TotalCount":3,"SiteId":"8123456789012345678"}`))
+	dec.UseNumber()
+	if err := dec.Decode(&m); err != nil {
+		t.Fatal(err)
+	}
+	if got := strAt(m, "RecordId"); got != "9123456789012345678" {
+		t.Errorf("strAt RecordId=%q", got)
+	}
+	if got := numString(m, "RecordId"); got != "9123456789012345678" {
+		t.Errorf("numString=%q", got)
+	}
+	if f, ok := numAt(m, "TotalCount"); !ok || f != 3 {
+		t.Errorf("numAt TotalCount=%v,%v", f, ok)
+	}
+	if got := strAt(m, "SiteId"); got != "8123456789012345678" { // 字符串形态原样保留
+		t.Errorf("strAt SiteId=%q", got)
+	}
+}
+
 func TestEsaDataJSON(t *testing.T) {
 	if got := esaDataJSON("1.2.3.4"); got != `{"Value":"1.2.3.4"}` {
 		t.Errorf("esaDataJSON=%s", got)

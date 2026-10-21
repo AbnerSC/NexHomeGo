@@ -42,6 +42,8 @@ func BodyStr(o map[string]interface{}, key string) string {
 			return "true"
 		}
 		return "false"
+	case json.Number:
+		return x.String() // UseNumber 解析的响应对象：原始字面量精确无损
 	case float64:
 		return numToString(x)
 	default:
@@ -56,6 +58,11 @@ func BodyNum(o map[string]interface{}, key string, def int) int {
 		return def
 	}
 	switch x := v.(type) {
+	case json.Number:
+		if n, err := x.Float64(); err == nil {
+			return int(math.Round(n))
+		}
+		return def
 	case float64:
 		return int(math.Round(x))
 	case string:
@@ -79,6 +86,11 @@ func BodyBool(o map[string]interface{}, key string, def bool) bool {
 	switch x := v.(type) {
 	case bool:
 		return x
+	case json.Number:
+		if f, err := x.Float64(); err == nil {
+			return f != 0
+		}
+		return x.String() != "0" // 超出 float64 范围的整数：非 "0" 即 true
 	case float64:
 		return x != 0
 	case string:

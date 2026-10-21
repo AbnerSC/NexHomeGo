@@ -108,13 +108,22 @@ func parseChannelIds(text string) []int64 {
 		return ids
 	}
 	var arr []interface{}
-	if err := json.Unmarshal([]byte(text), &arr); err != nil {
+	// UseNumber：等价 Java Gson item.getAsString() 的精确文本解析（渠道 id 为小整数，分支为防御性保留）
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	if err := dec.Decode(&arr); err != nil {
 		core.LogWarn(core.LogStun, "解析穿透通知渠道配置失败: "+err.Error())
 		return ids
 	}
 	for _, item := range arr {
 		var id int64
 		switch v := item.(type) {
+		case json.Number:
+			n, err := strconv.ParseInt(strings.TrimSpace(v.String()), 10, 64)
+			if err != nil {
+				continue // 非数字项丢弃
+			}
+			id = n
 		case float64:
 			id = int64(v)
 		case string:

@@ -270,7 +270,10 @@ func parseEsaPicked(text string) []esaPicked {
 		return nil
 	}
 	var arr []map[string]interface{}
-	if json.Unmarshal([]byte(text), &arr) != nil {
+	// UseNumber：勾选快照里的 id 可能为大整数（与响应层同语义精确解析，不可经 float64 丢精度）
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	if dec.Decode(&arr) != nil {
 		core.LogWarn(core.LogStun, "解析 ESA 勾选配置失败: text="+text)
 		return nil
 	}
@@ -440,9 +443,13 @@ func errDesc(err error) string {
 	return err.Error()
 }
 
-// esaLong 从线上对象取整型字段（数字/数字字符串，缺失/非法返回 0，等价 Java longOf）
+// esaLong 从线上对象取整型字段（数字/数字字符串，缺失/非法返回 0，等价 Java longOf）。
+// json.Number 按原始字面量精确解析（ESA RecordId/ConfigId 可达 18 位，不可经 float64）
 func esaLong(o map[string]interface{}, k string) int64 {
 	switch v := o[k].(type) {
+	case json.Number:
+		n, _ := strconv.ParseInt(v.String(), 10, 64)
+		return n
 	case float64:
 		return int64(v)
 	case string:
@@ -459,6 +466,11 @@ func esaInt(o map[string]interface{}, k string, def int) int {
 		return def
 	}
 	switch x := v.(type) {
+	case json.Number:
+		if n, err := strconv.Atoi(strings.TrimSpace(x.String())); err == nil {
+			return n
+		}
+		return def
 	case float64:
 		return int(x)
 	case string:

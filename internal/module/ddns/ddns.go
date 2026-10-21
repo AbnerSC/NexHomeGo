@@ -2,6 +2,7 @@ package ddns
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -573,6 +574,11 @@ func recordIdOf(task *core.Row, r map[string]interface{}) string {
 // numString 数字字段取整转十进制字符串（等价 Java String.valueOf(getAsLong)）；
 // 响应若以字符串回传数字ID则原样返回。
 func numString(r map[string]interface{}, key string) string {
+	if v, ok := r[key]; ok {
+		if n, ok := v.(json.Number); ok {
+			return n.String() // UseNumber 原始字面量精确无损（大整数 id 不可经 float64）
+		}
+	}
 	if f, ok := numAt(r, key); ok {
 		return strconv.FormatInt(int64(f), 10)
 	}

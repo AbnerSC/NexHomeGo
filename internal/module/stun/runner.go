@@ -179,11 +179,15 @@ type runner struct {
 	upnpPort    int
 	punch       *punch
 
-	running    atomic.Bool
-	udpSocket  *net.UDPConn
-	tcpServer  *net.TCPListener
-	sessions   map[string]*net.UDPConn
-	sessionsMu sync.Mutex
+	running   atomic.Bool
+	udpSocket *net.UDPConn
+	tcpServer *net.TCPListener
+	// tcpListening 标记 tcpServer 当前是否处于打开状态。Go 无法非侵入式查询 net.TCPListener
+	// 的关闭状态（SetDeadline 会打断阻塞中的 AcceptTCP，误杀接收协程），故以显式标志维护，
+	// 等价 Java ServerSocket.isClosed()。
+	tcpListening atomic.Bool
+	sessions     map[string]*net.UDPConn
+	sessionsMu   sync.Mutex
 
 	stopMu sync.Mutex
 	stopCh chan struct{}
@@ -258,6 +262,8 @@ func (r *runner) start() error {
 	r.upnpPublicWan.Store(false)
 	r.tcpMappedViaUpnp.Store(false)
 	r.tcpRefreshing.Store(false)
+	r.tcpListening.Store(false)
+	r.lastExtReachable.Store(-1) // -1=未判定（等价 Java Boolean null）；0/1 为已判定的不可达/可达
 	r.stopCh = make(chan struct{})
 	// 出站源 IP（通配绑定被拒时的具体地址兜底，Windows 监听后解锁同端口绑定，natmap 同款）
 	r.punch = newPunch(r.name, r.lanIp(), r.stunHost, r.stunPort, r.onTcpLinkReady)
@@ -592,6 +598,7 @@ func (r *runner) startTcp() error {
 		break
 	}
 	r.tcpServer = listener
+	r.tcpListening.Store(true)
 	localPort := listener.Addr().(*net.TCPAddr).Port
 
 	// 同端口维护 UDP STUN 映射：展示外网地址并保活，锥形 NAT 下对端可经该映射打洞回连
@@ -639,15 +646,15 @@ func (r *runner) openTcpListener(port int) (*net.TCPListener, error) {
 
 // startAcceptor TCP 入站接收线程：外网连接进来后逐条并入转发管道（监听重建时需重新启动）
 func (r *runner) startAcceptor() {
+	ln := r.tcpServer // 捕获当前监听：被 reopenListener 替换或被 stop 摘除后本循环即退出，避免旧协程在新句柄上重复 accept
 	r.trackTask(func() {
-		for r.running.Load() && r.tcpServer != nil {
-			client, err := r.tcpServer.AcceptTCP()
+		for r.running.Load() && r.tcpServer == ln {
+			client, err := ln.AcceptTCP()
 			if err != nil {
-				if r.running.Load() && r.tcpServer != nil {
+				if r.running.Load() && r.tcpServer == ln {
 					core.LogWarn(core.LogStun, "任务["+r.name+"] TCP接收异常: "+err.Error())
-					return
 				}
-				continue
+				return // 监听已关闭或被替换：静默退出，不在旧句柄上空转
 			}
 			c := client
 			r.trackTask(func() { r.pipeToTarget(c) })
@@ -743,7 +750,12 @@ func (r *runner) bounceRebuild(port int) {
 		if !r.running.Load() {
 			return
 		}
-		if err := r.tcpServer.Close(); err != nil {
+		cur := r.tcpServer
+		r.tcpServer = nil // 先摘除当前监听引用，令旧接收协程识别到自身已非当前而静默退出
+		r.tcpListening.Store(false)
+		if err := cur.Close(); err != nil {
+			r.tcpServer = cur // 关闭失败：恢复引用与打开标志，保留监听（等价 Java 关闭异常即返回）
+			r.tcpListening.Store(true)
 			core.LogWarn(core.LogStun, "任务["+r.name+"] 关闭TCP监听失败，跳过本次链路重建: "+err.Error())
 			return
 		}
@@ -768,17 +780,7 @@ func (r *runner) bounceRebuild(port int) {
 }
 
 func (r *runner) listenerClosed() bool {
-	return r.tcpServer == nil || !runningListener(r.tcpServer)
-}
-
-// runningListener 监听是否仍打开（等价 ServerSocket.isClosed）
-func runningListener(ln *net.TCPListener) bool {
-	return ln != nil && !isClosedListener(ln)
-}
-
-func isClosedListener(ln *net.TCPListener) bool {
-	// 通过控制消息探测监听关闭状态
-	return ln.SetDeadline(time.Now()) != nil
+	return r.tcpServer == nil || !r.tcpListening.Load()
 }
 
 // reopenListener 重开 TCP 监听并重启接收线程（弹跳重建后调用）
@@ -789,6 +791,7 @@ func (r *runner) reopenListener(port int) {
 		return
 	}
 	r.tcpServer = ln
+	r.tcpListening.Store(true)
 	r.startAcceptor()
 }
 
@@ -928,9 +931,10 @@ func (r *runner) stopCommon() {
 	if r.punch != nil {
 		r.punch.closeAll()
 	}
-	if r.tcpServer != nil {
-		_ = r.tcpServer.Close()
-		r.tcpServer = nil
+	if ln := r.tcpServer; ln != nil {
+		r.tcpServer = nil // 先摘除引用，接收协程据此静默退出
+		r.tcpListening.Store(false)
+		_ = ln.Close()
 	}
 	r.sessionsMu.Lock()
 	for k, s := range r.sessions {
@@ -1306,7 +1310,7 @@ func (r *runner) verifyChannel(manual bool) (*core.Row, error) {
 						r.noteExtVerdict(checkExternalInbound(target), false)
 					})
 				}
-				if v := r.lastExtReachable.Load(); v != 0 {
+				if v := r.lastExtReachable.Load(); v >= 0 {
 					if v == 1 {
 						result += "，公网入站验证(上次)可达"
 					} else {
@@ -1361,7 +1365,7 @@ func (r *runner) verifyTcpKeepalive(manual bool) string {
 	if !r.wanTcpReady.Load() {
 		return "FAIL(TCP映射未建立，巡检自动重试)"
 	}
-	if r.tcpServer == nil || isClosedListener(r.tcpServer) {
+	if r.tcpServer == nil || !r.tcpListening.Load() {
 		return "FAIL(本地TCP监听已关闭)"
 	}
 	t0 := time.Now().UnixMilli()
@@ -1412,7 +1416,7 @@ func (r *runner) noteExtVerdict(ext string, local bool) {
 	}
 	reachable := ext == "OK"
 	prev := r.lastExtReachable.Load()
-	if prev == 0 || (prev == 1) != reachable {
+	if prev < 0 || (prev == 1) != reachable {
 		v := int64(0)
 		if reachable {
 			v = 1
