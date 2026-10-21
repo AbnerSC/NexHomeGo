@@ -1,0 +1,1190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexHome 联枢 · 使用文档</title>
+    <link rel="stylesheet" href="docs.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+</head>
+<body>
+<div class="doc-shell">
+
+    <!-- 左侧目录 -->
+    <aside class="doc-side" id="docSide">
+        <div class="doc-side-head">
+            <div class="doc-logo">🏠 NexHome 联枢</div>
+            <div class="doc-sub">使用文档 · 说明手册</div>
+            <input type="search" id="docSearch" placeholder="搜索章节 / 关键词…" autocomplete="off">
+        </div>
+        <nav class="doc-toc" id="docToc"></nav>
+        <div class="doc-side-foot">
+            <button type="button" class="doc-linkbtn" id="btnExpandAll">全部展开</button>
+            <button type="button" class="doc-linkbtn" id="btnPrint">打印 / 存 PDF</button>
+        </div>
+    </aside>
+
+    <!-- 正文 -->
+    <main class="doc-main">
+        <header class="doc-topbar">
+            <button type="button" class="doc-burger" id="btnMenu">☰</button>
+            <span class="doc-crumb" id="docCrumb">使用文档</span>
+            <div class="doc-topbar-actions">
+                <a class="doc-btn" id="btnBackPanel" href="index.html">← 返回面板</a>
+            </div>
+        </header>
+
+        <article class="doc-article">
+            <div class="doc-hero">
+                <h1>NexHome 联枢 使用文档</h1>
+                <p class="doc-lead">一站式内网节点守护工具 · 官网说明手册。本文档随系统一同部署，覆盖全部模块的每一项功能、表单字段含义、业务规则与常见问题的处理方式。</p>
+                <div class="doc-hero-meta">
+                    <span>适用版本：v1.3.x</span>
+                    <span>随系统部署</span>
+                    <span>左侧支持关键词搜索</span>
+                </div>
+            </div>
+
+            <section class="doc-sec" id="sec-start">
+                <h2>1. 快速开始</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>1.1 首次启动与登录</h3></summary>
+                    <p>NexHome 是<b>单进程、前后端一体</b>的轻量服务：启动一个 Java 程序、默认只占用一个端口，所有任务与配置持久化在程序运行目录下的 <code>data/nexhome.db</code>（SQLite）。</p>
+                    <ol>
+                        <li>启动服务（Docker 或裸机 jar，见 <a href="#sec-deploy">第 15 章</a>）。</li>
+                        <li>浏览器打开 <code>http://127.0.0.1:8090</code>（默认端口 8090）。</li>
+                        <li>首次启动时系统会<b>随机生成 16 位高强度初始密码并打印到控制台</b>（形如「首次启动，已生成随机初始密码……」，含大小写字母、数字与符号）。<b>系统不存在任何固定默认密码</b>，请到控制台/容器日志读取。</li>
+                        <li>输入密码登录，<b>立即</b>到「系统设置 → 修改登录密码」更换为自己知道的密码。</li>
+                    </ol>
+                    <div class="doc-note warn"><b>安全提示</b>初始密码只打印一次，不落操作日志；丢失需按「忘记密码」流程重置。修改密码后所有已登录会话全部失效，需重新登录。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>1.2 登录安全机制</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:170px">机制</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>失败锁定</td><td>同一来源 IP 连续登录失败达到上限（默认 <b>3 次</b>）后，该 IP 临时锁定 <b>30 分钟</b>；成功登录后计数清零。阈值与时长可在「系统设置 → 登录安全设置」调整（次数 1~100，时长 1~1440 分钟）。失败计数为进程内存态，<b>重启进程后归零</b>。触发锁定时会向通知中心已启用渠道推送 <code>auth.lockout</code> 告警。</td></tr>
+                        <tr><td>单点登录</td><td>系统强制单点登录：新设备登录会自动注销之前的会话，旧标签页再次请求将被踢回登录页。</td></tr>
+                        <tr><td>会话有效期</td><td>登录后颁发的 Token 有效期 <b>24 小时</b>，过期后需重新登录。</td></tr>
+                        <tr><td>接口鉴权</td><td>除登录与登录状态检查外，所有 <code>/api/**</code> 接口都需携带 Token（请求头 <code>X-Token</code> 或查询参数 <code>token</code>）。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>1.3 界面导航总览</h3></summary>
+                    <p>左侧菜单共 13 个页面，自上而下依次为：</p>
+                    <table>
+                        <thead><tr><th style="width:150px">页面</th><th>作用</th><th style="width:180px">详见</th></tr></thead>
+                        <tbody>
+                        <tr><td>📊 总览</td><td>聚合所有模块健康状态、代理访问统计、网络测速</td><td><a href="#sec-dashboard">第 2 章</a></td></tr>
+                        <tr><td>🧭 网站导航</td><td>内外网双地址卡片入口，自动切换</td><td><a href="#sec-nav">第 3 章</a></td></tr>
+                        <tr><td>🌐 DDNS 同步</td><td>域名解析记录跟随 IP 自动更新</td><td><a href="#sec-ddns">第 4 章</a></td></tr>
+                        <tr><td>🔓 STUN 穿透</td><td>无公网 IP 时对外提供服务</td><td><a href="#sec-stun">第 5 章</a></td></tr>
+                        <tr><td>📡 可用性监控</td><td>HTTP / TCP / UDP 周期探测与告警</td><td><a href="#sec-monitor">第 6 章</a></td></tr>
+                        <tr><td>🔔 通知中心</td><td>Webhook / 邮件 / 钉钉渠道集中维护</td><td><a href="#sec-notify">第 7 章</a></td></tr>
+                        <tr><td>⚡ WOL 唤醒</td><td>局域网魔术包唤醒主机</td><td><a href="#sec-wol">第 8 章</a></td></tr>
+                        <tr><td>🔐 SSL 证书</td><td>证书申请、自动续期、下载</td><td><a href="#sec-cert">第 9 章</a></td></tr>
+                        <tr><td>🔀 代理中心</td><td>反向代理、SNI 证书、缓存与统计</td><td><a href="#sec-proxy">第 10 章</a></td></tr>
+                        <tr><td>🐳 Docker 容器</td><td>容器观测与起停运维</td><td><a href="#sec-docker">第 11 章</a></td></tr>
+                        <tr><td>📋 操作日志</td><td>全模块运行日志检索</td><td><a href="#sec-logs">第 12 章</a></td></tr>
+                        <tr><td>🩺 内存诊断</td><td>内存分解、跳变点与日志关联分析</td><td><a href="#sec-diag">第 13 章</a></td></tr>
+                        <tr><td>⚙️ 系统设置</td><td>访问配置、HTTPS、安全入口、凭证、密码、备份</td><td><a href="#sec-settings">第 14 章</a></td></tr>
+                        </tbody>
+                    </table>
+                    <p>顶栏右侧常驻 <b>CPU / 内存 / 虚拟内存</b> 三项实时负载（每 5 秒刷新，≥60% 变橙、≥85% 变红），以及 <b>📖 使用文档</b>（打开本页）与 <b>退出登录</b> 按钮。左下角显示当前版本号与 Java 版本。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>1.4 使用前建议的三步顺序</h3></summary>
+                    <ol>
+                        <li>「系统设置 → 服务商凭证配置」录入阿里云 AccessKey（若使用 DDNS / 证书 DNS01 自动验证 / ESA 同步）。</li>
+                        <li>「通知中心」建好至少一个可用渠道并「测试发送」通过，后续所有告警才有出口。</li>
+                        <li>「系统设置 → 访问与安全设置」按需改端口、开 HTTPS、设安全入口。</li>
+                    </ol>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-dashboard">
+                <h2>2. 总览仪表盘</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>2.1 顶部关键指标卡</h3></summary>
+                    <p>每张卡片聚合一个模块的健康状态，<b>点击卡片直接跳转到对应模块</b>。健康为绿色、告警为橙/红色。</p>
+                    <table>
+                        <thead><tr><th style="width:180px">卡片</th><th>展示内容与着色规则</th></tr></thead>
+                        <tbody>
+                        <tr><td>🌐 DDNS 启用/总数</td><td>已启用任务数 / 总任务数；存在失败任务时追加「N 失败」并转为橙色。</td></tr>
+                        <tr><td>🔓 STUN 运行/总数</td><td>运行中任务数 / 总任务数；存在异常任务时追加「N 异常」。</td></tr>
+                        <tr><td>📡 可用性监控</td><td>正常时显示 UP 数 / 总数；存在 DOWN 时改为「UP 数 UP · DOWN 数 DOWN」并转为红色。</td></tr>
+                        <tr><td>🔐 证书 已签发/总数</td><td>已签发数 / 总任务数；存在临期证书（≤21 天）时追加「N 临期」并转橙。</td></tr>
+                        <tr><td>🔀 代理站点</td><td>启用站点数 / 总站点数；已配置站点但代理服务未监听时显示「代理站点 · 未监听」。</td></tr>
+                        <tr><td>🐳 Docker 运行/总容器</td><td>Docker 未连接时显示「未连接」；存在已停止容器时转橙。</td></tr>
+                        <tr><td>⏱️ 运行时长</td><td>进程运行时长（天/小时/分钟），副标题显示当前实际监听端口，HTTPS 生效时追加「· HTTPS」。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>数据每 <b>15 秒</b>自动刷新一次。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>2.2 证书临期提醒</h3></summary>
+                    <p>存在 21 天内到期的已签发证书时，额外出现一张「🔐 证书临期提醒」表，列出任务名、到期日与剩余天数（≤7 天标红）。可跳转到 SSL 证书页处理。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>2.3 代理访问统计</h3></summary>
+                    <p>展示<b>最近 7 天</b>经由代理中心的访问情况，共三块：</p>
+                    <ul>
+                        <li><b>每日总访问次数</b>折线图：悬浮可查看具体日期与次数（无数据显示「暂无访问数据」）。</li>
+                        <li><b>网站访问 TOP10</b>：按域名统计的横向条形榜。</li>
+                        <li><b>来源地区 TOP10</b>：基于内置 ip2region 库解析访客 IP 得到的城市/地区榜。</li>
+                    </ul>
+                    <p>统计口径来自代理中心的访问记录，未启用代理或未配站点时此处为空。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>2.4 网络测速</h3></summary>
+                    <p>测量 <b>浏览器 ↔ 本系统</b> 之间的链路质量，<b>不经任何外部测速服务器</b>，因此可安全用于内网与穿透链路测试。</p>
+                    <table>
+                        <thead><tr><th style="width:150px">指标</th><th>算法与说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>延迟</td><td>小载荷连续 HTTP 往返，取<b>中位数</b>（代表链路典型往返，抗尖峰）；下方小字给出最低~最高区间。前两次请求作为握手预热不计入。</td></tr>
+                        <tr><td>抖动</td><td>P95 − P50（对应 ITU-T G.114 的网络性抖动 ipdv）。为保证样本量，至少采满 20 个样本或到最长窗口（两倍测量时长）为止，样本偏少时小字会标注「（偏少）」。</td></tr>
+                        <tr><td>丢包率</td><td>测量窗口内 5 秒未返回的请求计为一次丢失，按丢失/(成功+丢失) 计算百分比。</td></tr>
+                        <tr><td>下载 / 上传速率</td><td><b>6 路并发</b>拉流/推流（等于浏览器同源 HTTP/1.1 连接上限），正式测量前先短时预热全部连接以排除握手与 TCP 慢启动；下载读流放在独立 Worker 线程中，避免页面卡顿干扰测量。结果显示为 Mbps。</td></tr>
+                        </tbody>
+                    </table>
+                    <ul>
+                        <li>三个阶段（① 延迟/丢包 → ② 下载 → ③ 上传）各测 <b>10 秒</b>，顶部进度条按阶段权重单调推进并标注「预热/测量」。</li>
+                        <li>测速期间自动<b>暂停</b>仪表盘 15 秒刷新与顶栏 5 秒监控轮询，避免抢占连接与 CPU；中途切换页面不会打断测速，回到总览后数值与进度按缓存复原。</li>
+                        <li>Worker 不可用的老浏览器会自动回退主线程读流，此时下行数值可能被主线程性能限制。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-nav">
+                <h2>3. 网站导航</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>3.1 内外网地址智能切换</h3></summary>
+                    <p>每个导航条目可同时维护<b>内网地址</b>与<b>外网地址</b>，页面根据当前访问来源自动挑选该展示哪一套。右上角三段按钮：<b>自动 / 内网 / 外网</b>，手动指定后点「自动」可恢复自动识别。</p>
+                    <p>自动识别的优先级（从高到低）：</p>
+                    <ol>
+                        <li><b>浏览器内网探测</b>：配置了「内网探测链接」时，由浏览器直接探测该地址（如路由器管理地址）——可达即判定处于内网。此方式不受访问链路（域名、反向代理、回流）干扰，最准确。</li>
+                        <li><b>服务端连接源 IP</b>：按请求的真实来源 IP 判断内外网（即使面板通过两套域名访问也适用）。</li>
+                        <li><b>主机名回退</b>：以上均不可用时，按当前访问的 hostname 是否为 <code>localhost</code> / <code>127.</code> / <code>10.</code> / <code>192.168.</code> / <code>172.16~31.</code> 判断。</li>
+                    </ol>
+                    <p>当前模式下若条目没有对应地址，会<b>自动回退</b>到另一套地址（两个地址允许只填其一），卡片提示中标注「回退」。</p>
+                    <div class="doc-note tip"><b>建议</b>面板始终经互联网域名/反代访问时，服务端看到的源 IP 可能都是内网代理地址，此时务必配置「内网探测链接」提高判定准确率。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.2 新增 / 编辑导航条目</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:170px">字段</th><th style="width:110px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>网站名称</td><td>是</td><td>卡片标题。</td></tr>
+                        <tr><td>图标</td><td>否</td><td>可「上传图标」（支持 png / jpg / gif / webp / svg / ico），或填写外部图片 URL；「移除」清空。左侧实时预览，加载失败回退为 🌍。</td></tr>
+                        <tr><td>描述文字</td><td>否</td><td>鼠标悬停卡片时展示。</td></tr>
+                        <tr><td>内网访问地址</td><td>二者其一</td><td>如 <code>http://192.168.1.10:8080</code>。</td></tr>
+                        <tr><td>外网访问地址</td><td>二者其一</td><td>如 <code>https://nas.example.com</code>。内/外网地址<b>至少填写一个</b>，否则保存时提示。</td></tr>
+                        <tr><td>排序权重</td><td>否</td><td>数字，影响默认顺序；管理视图中的拖拽排序会直接改写顺序。</td></tr>
+                        <tr><td>是否启用</td><td>否</td><td>停用的条目不出现在卡片页，仍保留在管理列表中。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>卡片页与条目均可直接「编辑」「删除」（删除有二次确认）。点击卡片在新标签页打开链接。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.3 图标外观智能适配</h3></summary>
+                    <p>渲染卡片时系统会读取图标像素，按「四角不透明度 + 不透明覆盖率」自动判定形状并套用对应的托底样式：<b>方角 / 圆角 / 圆形 / 不规则</b>（镂空字标等低覆盖图形归不规则，需底板托底），同时提取不透明区域主色作为卡片悬停辉光（过暗自动提亮）。外链图标若没有 CORS 授权、非图片或分析超时，会静默回退为通用玻璃框，不影响展示。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.4 导航管理（拖拽排序）</h3></summary>
+                    <p>卡片页右上「🛠 管理导航」进入表格视图，展示图标缩略、名称、内/外网地址、启用状态。左侧 ⠿ 手柄可<b>拖动行调整顺序，松开自动保存</b>。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.5 内网探测设置</h3></summary>
+                    <p>管理视图中的「🔌 内网探测」用于填写探测链接（留空关闭）。填写后面板加载时会用 <code>no-cors</code> 请求该地址（不读取内容、带时间戳穿透缓存），超时或失败按不可达处理。</p>
+                    <ul>
+                        <li>建议填写<b>内网特有</b>地址（路由器、NAS 管理页），若其他局域网也使用该地址（如 <code>192.168.1.1</code>）可能误判为内网。</li>
+                        <li>面板经 <b>HTTPS</b> 访问时浏览器会拦截 <code>http://</code> 探测链接（混合内容），请改填内网 https 地址，或经 http 访问面板。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.6 背景设置</h3></summary>
+                    <p>「🌄 背景设置」可为导航首页指定背景图（留空恢复默认浅色底），背景经模糊处理后铺满首页，仅影响观感。支持两种来源：</p>
+                    <ul>
+                        <li><b>系统内路径</b>：① 「图片管理」上传的图片，形如 <code>/nav-icons/xxx.png</code>；② 自行放入程序 <code>data/images</code> 目录的文件，以 <code>/images/bg.png</code> 引用。</li>
+                        <li><b>外部直链</b>：任意 <code>http(s)</code> 图片地址。</li>
+                    </ul>
+                    <p>可点「从图库选择」直接挑图回填。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>3.7 图片管理（图库）</h3></summary>
+                    <p>「🖼 图片管理」集中维护上传的图片，可用于导航图标与背景图：</p>
+                    <ul>
+                        <li><b>上传</b>：png / jpg / gif / webp / svg / ico；上传接口单请求上限 8MB，业务层对图标文件另有 <b>2MB</b> 上限，超出会给出友好报错。</li>
+                        <li><b>预览</b>：点缩略图叠层查看原图，可顺手复制路径。</li>
+                        <li><b>复制路径</b>：便于粘贴到背景地址或图标 URL 输入框。</li>
+                        <li><b>引用提示</b>：列表会显示该图被哪些导航/背景引用。</li>
+                        <li><b>删除</b>：仍被导航图标或背景引用的图片会被后端拒绝删除。</li>
+                        <li><b>选图模式</b>：从背景设置进入时点「选用」即把路径回传给表单。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-ddns">
+                <h2>4. DDNS 域名同步</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>4.1 功能说明</h3></summary>
+                    <p>DDNS 模块按固定周期把<b>当前 IP</b> 写入域名解析记录，让域名始终跟随出口地址变化。直连<b>阿里云云解析 DNS</b> 与<b>阿里云 ESA（边缘安全加速）</b>，无需额外 SDK 或中间服务。</p>
+                    <p>页面列表列：<b>任务</b>（名称 + 服务商）、<b>域名</b>（<code>主机记录.主域名</code> + 记录类型）、<b>IP来源</b>、<b>定时同步</b>（开关 + 间隔秒数）、<b>当前IP</b>（最近一次同步成功的 IP）、<b>最近同步</b>（状态徽标 + 时间）、<b>操作</b>（同步 / 编辑 / 删除）。数据每 <b>10 秒</b>自动刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.2 新增 / 编辑同步任务</h3></summary>
+                    <p>点击右上「＋ 新增同步任务」，字段如下（<b>带 * 为必填</b>）：</p>
+                    <table>
+                        <thead><tr><th style="width:180px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>任务名称</td><td>是</td><td>便于识别的自定义名称。</td></tr>
+                        <tr><td>服务商</td><td>是</td><td><b>阿里云DNS</b>（云解析 DNS）或 <b>阿里云ESA</b>。切换为 ESA 时表单会额外出现「ESA 站点」选择区。</td></tr>
+                        <tr><td>主域名</td><td>是</td><td>如 <code>example.com</code>（不带主机记录）。</td></tr>
+                        <tr><td>主机记录</td><td>是</td><td>如 <code>www</code>、<code>@</code>、<code>nas</code>。最终记录为 <code>主机记录.主域名</code>。</td></tr>
+                        <tr><td>记录类型</td><td>—</td><td><b>A</b>（IPv4）或 <b>AAAA</b>（IPv6）。需与所选 IP 来源返回的地址族一致，否则同步会失败。</td></tr>
+                        <tr><td>TTL（秒）</td><td>—</td><td>解析缓存时间，<b>最小 60</b>，默认 <b>600</b>。频繁变更 IP 时可调小，但过小会增加查询量。</td></tr>
+                        <tr><td>IP 来源</td><td>是</td><td><b>公网接口自动获取</b> / <b>本机网卡</b> / <b>手动输入</b>，详见 4.3。</td></tr>
+                        <tr><td>网卡</td><td>—</td><td>仅「本机网卡」模式显示。<b>留空 = 自动选择</b>（取第一个非回环、支持广播的网卡）；下拉列表来自实时枚举，多网卡机器建议显式指定。</td></tr>
+                        <tr><td>手动 IP</td><td>条件必填</td><td>仅「手动输入」模式显示且必填，用于 IP 固定但无法自动获取的场景。</td></tr>
+                        <tr><td>阿里云凭证</td><td>是</td><td>下拉选择在「系统设置 → 服务商凭证配置」中维护的 AccessKey；选「手动填写 AccessKey」则需自行填 ID / Secret。下拉<b>只列出与当前服务商类型匹配的凭证</b>（ALIYUN_DNS / ALIYUN_ESA 都归属阿里云），已引用的配置在编辑时始终保留。</td></tr>
+                        <tr><td>AccessKey ID / Secret</td><td>条件必填</td><td>仅在未选择凭证配置时显示必填。<b>建议使用 RAM 子账号</b>，仅授予 <code>AliyunDNSFullAccess</code> 或 ESA 解析相关权限。</td></tr>
+                        <tr><td>ESA 站点</td><td>条件必填</td><td>仅服务商为 ESA 时显示。点「加载站点」由 ESA API 实时拉取，显示形如「站点名（SiteId: 1234567890，生效状态）」；若原 SiteId 已不在列表中，会保留该项并标注「当前站点，未在阿里云列表中找到」，避免编辑回显丢失。</td></tr>
+                        <tr><td>同步间隔（秒）</td><td>—</td><td><b>最小 60</b>，默认 <b>300</b>。</td></tr>
+                        <tr><td>启用定时同步</td><td>—</td><td>停用后仍可手动点「同步」执行一次。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.3 「预览即将同步的 IP」</h3></summary>
+                    <p>表单中「IP 预览」区的按钮，按<b>当前尚未保存的 IP 来源配置</b>实时解析一次并绿色显示结果（失败时红色显示原因）。用于在保存前确认「本机网卡」选对了网卡、「公网接口」拿到的确实是出口公网 IP，避免把错误地址写进线上解析。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.4 三种 IP 来源如何选</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:150px">模式</th><th>适用场景与注意</th></tr></thead>
+                        <tbody>
+                        <tr><td>公网接口自动获取</td><td>最常见。通过外部接口获取本机出口公网 IP，适用于宽带拨号动态公网 IP。<b>注意</b>：处于运营商 NAT（CGNAT）下时拿到的是共享出口地址，指向本机不一定可达，此时应改用 STUN 穿透（<a href="#sec-stun">第 5 章</a>）。</td></tr>
+                        <tr><td>本机网卡</td><td>本机拥有需要解析出去的地址（如专线公网 IP、IPv6 地址在网卡上）。可指定网卡，留空自动选择。<b>注意</b>：拿到的是内网地址时，公网解析将不可达。</td></tr>
+                        <tr><td>手动输入</td><td>地址由外部确定（例如配合 STUN 映射、或固定 another 主机地址）。不会自动变化，仅适合地址稳定的场景。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.5 定时同步与手动同步</h3></summary>
+                    <ul>
+                        <li><b>定时同步</b>：列表中每行的开关控制，开启后按「同步间隔」周期执行；关闭只保留任务配置。切换开关会立即生效并在短提示中反馈。</li>
+                        <li><b>手动同步</b>：点行内「同步」按钮立即触发一次。同步为<b>异步</b>执行，页面会在 2 秒、6 秒后各刷新一次列表以显示最终状态（包含「记录已存在因而取消写入」等结果）。</li>
+                        <li>同步结果写入「最近同步」列：<b>成功</b>（绿）/<b>失败</b>（红，附原因）；「当前IP」列展示最近同步成功的地址。</li>
+                    </ul>
+                    <div class="doc-note tip"><b>写入策略</b>目标记录已存在且值一致时按「跳过」处理，不会反复提交；记录值变化时才发起修改。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.6 删除任务：会问是否连远程记录一起删</h3></summary>
+                    <p>点「删除」先做常规二次确认，随后<b>再弹一次询问</b>：</p>
+                    <ul>
+                        <li><b>删除远程</b>：同步删除服务商上的解析记录，之后再删本地任务。</li>
+                        <li><b>仅删本地</b>：只删除本地任务配置，<b>保留云端解析记录</b>（适合把域名交给别的管理方式接管）。</li>
+                    </ul>
+                    <div class="doc-note warn"><b>注意</b>选择「删除远程」后，若该记录正被证书 DNS01、代理站点等使用，将一并失去解析，请先确认影响。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>4.7 常见问题</h3></summary>
+                    <ul>
+                        <li><b>报权限错误（Forbidden / NoPermission）</b>：AccessKey 权限策略不足，需包含云解析 DNS（或 ESA）的读写权限；换用系统授权策略 <code>AliyunDNSFullAccess</code> 的 RAM 子账号。</li>
+                        <li><b>「加载站点」提示无可用站点</b>：阿里云 ESA 尚未添加站点，请先到 ESA 控制台完成站点接入再回来创建任务。</li>
+                        <li><b>同步成功但域名不生效</b>：多为 TTL 缓存未过期，等待一个 TTL 周期；或记录类型（A/AAAA）与实际 IP 地址族不匹配。</li>
+                        <li><b>公网接口获取失败</b>：出口接口不可达或本机断网，任务会记为失败并保留上一次成功 IP，可改用「本机网卡」模式验证。</li>
+                    </ul>
+                    <p>同步失败的具体原因可在「<a href="#sec-logs">操作日志</a>」的 <b>DDNS</b> 模块中查看。</p>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-stun">
+                <h2>5. STUN 端口穿透</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>5.1 能力与边界（先读这一节）</h3></summary>
+                    <p>STUN 模块通过标准 STUN 协议在 NAT 设备上<b>建立并保活映射</b>，让没有公网 IP 的主机也能对外提供服务。穿透通道可承载 <b>UDP / TCP / HTTP</b> 数据传输。</p>
+                    <div class="doc-note warn">
+                        <b>三条必须知道的前提</b><br>
+                        ① <b>任务「运行中」≠ 外网可访问</b>，请以「可用性自测」列的结果为准。<br>
+                        ② <b>对称型（Symmetric）NAT 纯 STUN 无法穿透</b>，请改用路由器端口转发。<br>
+                        ③ <b>受限锥形 NAT</b> 仅允许已打洞的对端连入，需要在任务中填写「对端公网地址」由本端主动打洞。
+                    </div>
+                    <p>穿透启动时会自动尝试 <b>UPnP 端口映射</b>（路由器 WAN 口为公网地址时即为权威入站通道）。在 CGNAT 或未启用 UPnP 的情况下，<b>TCP 任务</b>会按优先级自动降级选择出站通道：STUN 长连接精确映射 → <b>双链路模式</b>（公共端点出站保活 + 同端口 STUN 短连接探测精确映射，对单事务型 STUN 服务器同样可复用）→ 端口保留兜底。</p>
+                    <p>穿透成功后系统会<b>自动做一次自测</b>（映射保活 + 公网入站可达），之后可在操作列手动复测。列表数据每 <b>5 秒</b>自动刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.2 新增 / 编辑穿透任务</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:200px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>任务名称</td><td>是</td><td>自定义名称，会出现在通知正文与 Webhook 占位符 <code>name</code> 中。</td></tr>
+                        <tr><td>穿透协议</td><td>是</td><td><b>UDP</b> 或 <b>TCP</b>。协议决定了通道类型，也影响 ESA 同步行为（UDP 任务不改回源端口）。</td></tr>
+                        <tr><td>内网目标 IP</td><td>是</td><td>要对外暴露的服务所在地址，如 <code>192.168.1.10</code>（可以是本机或其他内网主机）。</td></tr>
+                        <tr><td>内网目标端口</td><td>是</td><td>1~65535，如 <code>443</code>。</td></tr>
+                        <tr><td>本地绑定端口</td><td>—</td><td>默认 <b>0 = 随机</b>。指定固定本地端口可获得更稳定的映射，被占用时会启动失败（状态转为错误）。</td></tr>
+                        <tr><td>保活间隔（秒）</td><td>—</td><td><b>最小 10</b>，默认 <b>25</b>。小于 NAT 老化时间才能维持映射；间隔越大映射越容易超时失效。</td></tr>
+                        <tr><td>对端公网地址</td><td>—</td><td>TCP 打洞用，形如 <code>203.0.113.5:8080</code>。<b>留空则仅接受入站连接</b>；受限锥形 NAT 下必须填写才能连通。</td></tr>
+                        <tr><td>UPnP 端口映射</td><td>—</td><td>默认启用。路由器不支持 UPnP 时可停用，以免每次启动做无用探测（列表中会标注「UPnP 已关闭」）。</td></tr>
+                        <tr><td>STUN 服务器</td><td>是</td><td>从服务器库下拉选择（见 5.3），或选「自定义...」手工填写地址与端口。</td></tr>
+                        <tr><td>STUN 地址 / 端口</td><td>条件必填</td><td>仅选「自定义」时显示；端口默认 <b>3478</b>。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>表单下方还有三个<b>可选区块</b>：ESA 同步（5.6）、Webhook 同步（5.7）、通知中心推送（5.8）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.3 STUN 服务器管理</h3></summary>
+                    <p>任务页右上「🛠 管理STUN服务器」进入维护页。系统<b>首次运行预置了一批公共种子服务器</b>（小米、谷歌、下一云等常见 STUN 服务，端口默认 3478），可自行增删改：</p>
+                    <table>
+                        <thead><tr><th style="width:170px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>服务器名称 *</td><td>如「小米 / 谷歌」，用于任务下拉显示。</td></tr>
+                        <tr><td>服务器地址 *</td><td>如 <code>stun.miwifi.com</code>。</td></tr>
+                        <tr><td>端口</td><td>默认 <b>3478</b>。</td></tr>
+                        <tr><td>STUN-over-TCP 支持</td><td>可点「探测」按钮实测该服务器是否支持 TCP 方式的 STUN 查询（<b>最长约 3 秒</b>出结果）。TCP 任务依赖此项，支持时列表会带标记。</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="doc-note tip"><b>探测无响应怎么办</b>更换服务器（如 <code>stun.qq.com:3478</code>、<code>stun.miwifi.com:3478</code>），并确认本机可正常访问公网 UDP。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.4 启动停止、NAT 探测与可达性自测</h3></summary>
+                    <p>任务行状态列有三种：<b>运行中</b>（绿）/ <b>错误</b>（红）/ <b>已停止</b>（灰）。操作列的图标按钮依次为：</p>
+                    <table>
+                        <thead><tr><th style="width:150px">按钮</th><th>作用</th></tr></thead>
+                        <tbody>
+                        <tr><td>▶ / ⏸</td><td>启动 / 停止任务（同一位置按状态切换）。</td></tr>
+                        <tr><td>📡 探测 NAT 类型</td><td>弹窗展示 <b>NAT 类型</b>、<b>外网映射地址(UDP)</b>，TCP 任务还会给出 <b>TCP 映射地址</b>。任务未运行时结果来自临时端口探测，弹窗会明确标注（对称型 NAT 下与任务映射不同、每次可能变化，属正常现象）。</td></tr>
+                        <tr><td>🔎 可达性自测</td><td>仅运行中可用。从公网侧连接外网映射地址，验证「外部真的能进来」；结果显示在「可用性自测」列（OK / FAIL / 重建中，附时间）。<b>这是判断外网可访问的权威依据</b>。</td></tr>
+                        <tr><td>🌐 ESA 同步</td><td>仅启用 ESA 同步时显示，手动补一次同步并逐条展示结果（见 5.6）。</td></tr>
+                        <tr><td>🔔 通知测试</td><td>仅启用通知推送时显示，按任务勾选渠道试发一条通知（投递异步，结果到「告警通知」页查看）。</td></tr>
+                        <tr><td>📊 流量统计</td><td>查看该任务的穿透流量曲线（见 5.9）。</td></tr>
+                        <tr><td>✏️ / 🗑️</td><td>编辑 / 删除（删除有二次确认）。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.5 列表列含义</h3></summary>
+                    <ul>
+                        <li><b>内网目标</b>：<code>IP:端口</code>，填了对端公网地址时额外显示「对端: …」。</li>
+                        <li><b>STUN服务器</b>：<code>host:port</code>，UPnP 被停用时会标注「UPnP 已关闭」。</li>
+                        <li><b>NAT类型</b>：最近一次探测结果（如 完全锥形 / 受限锥形 / 对称型）。</li>
+                        <li><b>外网映射地址</b>：当前生效的 <code>IP:端口</code>，即外部访问入口。</li>
+                        <li><b>穿透成功时间</b> / <b>流量</b>：本次映射建立时间与累计转发字节数。</li>
+                        <li><b>ESA 同步</b>：未启用显示灰「未启用」；启用后按最近结果着色 <b>OK</b>（绿）/ <b>PARTIAL</b>（橙）/ <b>FAIL</b>（红）/「待同步」。</li>
+                        <li><b>通知推送</b>：显示已勾选的渠道数；<b>红色「未选渠道」表示启用了但没勾选任何渠道</b>，将不会发送。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.6 ESA 边缘安全加速同步</h3></summary>
+                    <p>启用后，在<b>穿透成功</b>与<b>映射地址变化</b>时自动：把<b>映射 IP 写入 ESA 的 DNS 解析记录</b>、把<b>映射端口写入 ESA 回源规则的 HTTPS 端口</b>，实现「无公网 IP + 域名直连」的自动闭环。</p>
+                    <p>配置步骤：启用 → 选择服务商凭证（阿里云）→「拉取站点」选择站点 →「拉取 DNS 解析记录」勾选要写入映射 IP 的记录 →「拉取回源规则」勾选要写入映射端口的规则。<b>站点、记录、规则均由 API 实时拉取供勾选，不需要手工填 ID。</b></p>
+                    <div class="doc-note warn">
+                        <b>写入规则（重要）</b><br>
+                        ① <b>只更新已勾选项，绝不新增或删除</b>云端配置。<br>
+                        ② 解析记录<b>仅 A / AAAA 类型生效</b>；多值记录、以及 IPv4↔IPv6 地址族不一致的记录<b>不会被覆盖</b>。<br>
+                        ③ 回源端口<b>仅 TCP 任务改动</b>；UDP 任务的映射端口对 HTTPS 回源无意义，只同步解析记录。<br>
+                        ④ 回源<b>协议沿用线上现值</b>，本功能只改端口。<br>
+                        ⑤ 现值与目标一致时<b>跳过写入</b>。<br>
+                        ⑥ 「全局」类型的回源配置不适用端口同步，勾选列表中不展示。
+                    </div>
+                    <p>快照中已被云端删除的勾选项会以「线上未找到 · 只更新不新增」标记保留（保持勾选状态，便于取消），同步时自动跳过。同步失败<b>只记日志并体现在「ESA 同步」列，不影响穿透本身</b>，可点行内「ESA」手动补一次。手动同步弹窗按「解析记录 / 回源规则」逐条列出 <code>原值 → 新值</code> 与状态（已更新 / 跳过 / 失败）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.7 Webhook 同步（17 个占位符）</h3></summary>
+                    <p>可添加<b>多条</b> Webhook：穿透成功 / 映射地址变化时把结果推送出去。每条可填：地址 URL、方法（GET / POST）、请求头（每行一个 <code>key: value</code>，如 <code>Authorization: Bearer xxx</code>）、JSON 请求体（POST）、自定义参数（GET 查询串，每行 <code>key=value</code>）。</p>
+                    <ul>
+                        <li><b>POST</b>：请求体中占位符会被替换为实际值；<b>留空则自动发送全部结果字段</b>。</li>
+                        <li><b>GET</b>：把结果字段与自定义参数拼为查询串。</li>
+                        <li>推送失败<b>仅记日志，不影响穿透</b>。</li>
+                    </ul>
+                    <p><b>可用占位符共 17 个</b>（在 URL、请求头、参数值、JSON 请求体中均可引用）：</p>
+                    <div class="doc-cols">
+                        <table>
+                            <thead><tr><th style="width:42%">占位符</th><th>说明</th></tr></thead>
+                            <tbody>
+                            <tr><td><code>${event}</code></td><td>事件类型：<code>stun.punched</code> / <code>stun.mapped_changed</code></td></tr>
+                            <tr><td><code>${id}</code></td><td>任务 ID（如 1）</td></tr>
+                            <tr><td><code>${name}</code></td><td>任务名称（如 Local-https）</td></tr>
+                            <tr><td><code>${protocol}</code></td><td>穿透协议（UDP / TCP）</td></tr>
+                            <tr><td><code>${target_ip}</code></td><td>内网目标 IP（如 172.17.1.213）</td></tr>
+                            <tr><td><code>${target_port}</code></td><td>内网目标端口（如 443）</td></tr>
+                            <tr><td><code>${bind_port}</code></td><td>本地绑定端口（0=随机）</td></tr>
+                            <tr><td><code>${stun_host}</code></td><td>STUN 服务器地址（如 stun.nextcloud.com）</td></tr>
+                            <tr><td><code>${stun_port}</code></td><td>STUN 服务器端口（如 3478）</td></tr>
+                            <tr><td><code>${peer_addr}</code></td><td>对端公网地址（如 203.0.113.5:8080）</td></tr>
+                            </tbody>
+                        </table>
+                        <table>
+                            <thead><tr><th style="width:42%">占位符</th><th>说明</th></tr></thead>
+                            <tbody>
+                            <tr><td><code>${mapped_addr}</code></td><td>穿透后外网映射地址（如 1.2.3.4:5678）</td></tr>
+                            <tr><td><code>${mapped_ip}</code></td><td>穿透后外网 IP（如 1.2.3.4）</td></tr>
+                            <tr><td><code>${mapped_port}</code></td><td>穿透后外网端口（如 5678）</td></tr>
+                            <tr><td><code>${nat_type}</code></td><td>NAT 类型（如 受限锥形、对称型）</td></tr>
+                            <tr><td><code>${punched_at}</code></td><td>穿透成功时间（如 2026-10-08 13:50:49）</td></tr>
+                            <tr><td><code>${check_result}</code></td><td>自测结果（OK / FAIL / 重建中）</td></tr>
+                            <tr><td><code>${status}</code></td><td>任务状态（RUNNING / STOPPED / ERROR）</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p>示例请求体：<code>{"event":"${event}","task":"${name}","ip":"${mapped_ip}","port":"${mapped_port}","extra":{"key":"value"}}</code></p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.8 通知中心推送</h3></summary>
+                    <p>启用后，在三种时机按<b>勾选的通知渠道</b>（可多选，渠道本身在「<a href="#sec-notify">告警通知</a>」页集中维护）发送通知：① 穿透成功；② 映射地址变化；③ <b>可用性自测确认失效（FAIL）</b>。</p>
+                    <ul>
+                        <li>通知正文包含：任务名、协议、内网目标、外网映射地址、NAT 类型。</li>
+                        <li>投递结果写入「告警通知」页的<b>最近发送记录</b>，不落在任务行上。</li>
+                        <li>渠道被删除或停用时<b>自动跳过</b>，不影响穿透；已删除渠道在表单中仍会列出并标注「已删除 · 不会发送」，便于取消选择。</li>
+                        <li>保存后可点行内「🔔」试发一次，验证渠道勾选与投递链路。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.9 流量统计</h3></summary>
+                    <p>点行内「📊 流量统计」打开弹窗，查看该任务的穿透流量曲线，支持三个统计周期：<b>按小时（近 24 小时）</b>、<b>按天（近 30 天）</b>、<b>按月（近 12 月）</b>。鼠标悬停可查看具体时点数值。列表中的「流量」列展示累计转发字节数，按 KB/MB/GB 自动换算。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>5.10 排错：TCP 任务运行中但外网仍访问不通</h3></summary>
+                    <ol>
+                        <li>先点「📡 探测 NAT 类型」：<b>对称型</b>无法纯 STUN 穿透 → 改用路由器端口转发。</li>
+                        <li><b>受限锥形</b> → 在任务中填写「对端公网地址」由本端主动打洞，或请对端配合互打。</li>
+                        <li>确认<b>主机防火墙</b>已放行监听端口（Windows：允许 Java 通过「专用 / 公用网络」的入站规则）。</li>
+                        <li>确认目标内网服务本身在监听且允许来自该地址的访问。</li>
+                        <li>点「🔎 可达性自测」复核；结果仍为 FAIL 时到「<a href="#sec-logs">操作日志</a>」的 <b>STUN</b> 模块看详细原因。</li>
+                    </ol>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-monitor">
+                <h2>6. 服务/端口可用性监控</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>6.1 探测类型与判定规则</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:110px">类型</th><th style="width:210px">目标格式</th><th>如何判定正常</th></tr></thead>
+                        <tbody>
+                        <tr><td>HTTP</td><td>完整 URL，含 <code>http://</code> 或 <code>https://</code><br>如 <code>https://example.com/health</code></td><td>按<b>期望状态码</b>判定，可选再做<b>关键字</b>包含校验。<b>HTTPS 已并入此类</b>（按 URL scheme 请求），存量 HTTPS 任务仍兼容。</td></tr>
+                        <tr><td>TCP</td><td><code>host:port</code>，如 <code>192.168.1.10:22</code></td><td>端口能建立连接即判可达。</td></tr>
+                        <tr><td>UDP</td><td><code>host:port</code>，如 <code>223.5.5.5:53</code></td><td><b>尽力探测</b>：收到回包判可达；<b>无回包但未收到 ICMP 端口不可达差错也按可达处理</b>（多数 UDP 服务不应答未知报文）。<b>53 端口会发送标准 DNS 查询并按应答判定</b>，结果最可靠。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>列表列：<b>任务</b>（名称 + 类型/方法）、<b>目标</b>、<b>状态</b>（UP 正常 / DOWN 故障 / 未探测；连续失败>1 时额外显示「连续失败 N」）、<b>延迟</b>、<b>最近探测</b>、<b>定时</b>（开关 + 间隔）、<b>操作</b>（立即探测 / 编辑 / 删除）。数据每 <b>15 秒</b>自动刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>6.2 新增 / 编辑监控任务</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>任务名称</td><td>是</td><td>告警标题会使用它。</td></tr>
+                        <tr><td>探测类型</td><td>是</td><td>HTTP / TCP / UDP。切换后表单自动隐藏不适用的字段并更新目标格式提示。</td></tr>
+                        <tr><td>探测目标</td><td>是</td><td>格式见 6.1。</td></tr>
+                        <tr><td>请求方法</td><td>—</td><td>仅 HTTP 显示，<b>GET</b>（默认）或 <b>POST</b>。</td></tr>
+                        <tr><td>期望状态码</td><td>—</td><td>仅 HTTP 显示，默认 <b>200</b>；填 <b>0 表示接受全部 2xx/3xx</b>。</td></tr>
+                        <tr><td>关键字</td><td>—</td><td>仅 HTTP 显示。响应体包含该串判正常，<b>留空不校验</b>。适合接口返回 200 但业务失败的场景（如填 <code>\"code\":0</code>）。</td></tr>
+                        <tr><td>探测间隔（秒）</td><td>—</td><td><b>最小 15</b>，默认 <b>60</b>。</td></tr>
+                        <tr><td>超时（秒）</td><td>—</td><td>默认 <b>10</b>；<b>实际最少按 3 秒生效</b>。经 VPN / 穿透链路访问的目标建议 <b>≥ 5 秒</b>。</td></tr>
+                        <tr><td>连续失败告警阈值（次）</td><td>—</td><td>默认 <b>2</b>，最小 1。指<b>连续失败的周期数</b>；设 1 时一次抖动即告警。</td></tr>
+                        <tr><td>启用监控</td><td>—</td><td>停用后不再调度。</td></tr>
+                        <tr><td>恢复时推送通知</td><td>—</td><td>默认开启；关闭后只在故障时告警。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>6.3 抗抖动机制</h3></summary>
+                    <ul>
+                        <li>单个探测周期内，对连接超时、DNS 解析失败等<b>瞬时故障自动重试 3 次</b>（单次超时最少 3 秒）。</li>
+                        <li>连续失败达到「告警阈值」所指的周期数才推送告警，避免单次抖动刷屏。</li>
+                        <li>「异常 → 恢复」需<b>连续多个周期成功</b>才确认，然后才推送恢复通知。</li>
+                        <li>探测在独立线程执行，各任务<b>错峰触发</b>，不会影响其他定时任务。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>6.4 告警与恢复通知</h3></summary>
+                    <p>目标不可用时向「通知中心」<b>全部已启用渠道</b>推送告警（事件标识 <code>monitor.down</code>，标题如「监控告警：XX 不可用」）；恢复时若任务开启了「恢复时推送通知」则推送 <code>monitor.up</code>。发送失败仅记录，不影响探测主流程。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>6.5 立即探测</h3></summary>
+                    <p>点行内「立即探测」不等周期手动跑一次，常用于刚部署服务后验证。探测异步执行，页面会在 2.5 秒、6 秒后各刷新一次列表展示最新结果。</p>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-notify">
+                <h2>7. 统一告警通知中心</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>7.1 能做什么</h3></summary>
+                    <p>集中维护通知渠道，各业务模块事件通过统一接口投递：<b>按启用渠道自动扇出</b>（广播），或<b>按任务自选的多个渠道</b>定向投递。当前会产生通知的事件：</p>
+                    <table>
+                        <thead><tr><th style="width:210px">事件标识</th><th>触发时机</th></tr></thead>
+                        <tbody>
+                        <tr><td><code>monitor.down</code></td><td>监控任务连续失败达阈值，目标不可用。</td></tr>
+                        <tr><td><code>monitor.up</code></td><td>故障任务连续多周期成功后恢复（需任务开启恢复通知）。</td></tr>
+                        <tr><td><code>auth.lockout</code></td><td>同一来源 IP 登录失败达上限触发临时锁定。</td></tr>
+                        <tr><td><code>stun.punched</code> / <code>stun.mapped_changed</code></td><td>穿透成功 / 映射地址变化；另外<b>可用性自测确认失效（FAIL）</b>也会推送。仅投递到该任务勾选的渠道。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>页面下半部分是「📬 最近发送记录」（<b>最多 10 条</b>），列出时间、渠道、事件、标题与结果（成功 / 失败及详情）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>7.2 Webhook 回调渠道</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:190px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>回调地址 URL *</td><td>支持占位符，如 <code>https://example.com/hook?title=${title}</code>。</td></tr>
+                        <tr><td>请求方法</td><td><b>POST</b>（默认）或 <b>GET</b>。</td></tr>
+                        <tr><td>请求头（JSON，可选）</td><td>如 <code>{"Authorization":"Bearer xxx"}</code>；不是合法 JSON 会在保存时报错。</td></tr>
+                        <tr><td>请求体模板（可选）</td><td>留空则使用默认 JSON（含 <code>title</code> / <code>message</code> / <code>event</code> / <code>time</code> 等字段）；填写则按模板发送并做占位符替换。</td></tr>
+                        </tbody>
+                    </table>
+                    <p><b>可用占位符共 4 个</b>，在 URL、请求头、请求体模板中均可引用：<code>${title}</code>（标题）、<code>${message}</code>（正文）、<code>${event}</code>（事件标识）、<code>${time}</code>（发生时间）。未识别的占位符会被替换为空字符串。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>7.3 邮件（SMTP）渠道</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:200px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>SMTP 服务器 *</td><td>如 <code>smtp.qq.com</code>。</td></tr>
+                        <tr><td>端口</td><td>默认 <b>465</b>，随加密方式选择而变。</td></tr>
+                        <tr><td>加密方式</td><td><b>SSL (465, smtps)</b> 默认 / <b>STARTTLS (587)</b> / <b>不加密 (25)</b>。</td></tr>
+                        <tr><td>用户名</td><td>通常为发件邮箱；QQ/163 等需使用<b>授权码</b>而非登录密码。</td></tr>
+                        <tr><td>密码 / 授权码</td><td>输入框为密码型，不会明文回显。</td></tr>
+                        <tr><td>发件人 (From)</td><td><b>留空则用用户名</b>。</td></tr>
+                        <tr><td>收件人 (To) *</td><td>多个收件人以<b>逗号分隔</b>。</td></tr>
+                        <tr><td>保存到「已发送」文件夹</td><td>勾选后经 <b>IMAP</b> 存档，展开额外字段：<b>IMAP 服务器</b>（留空同 SMTP 服务器）、<b>IMAP 端口</b>（默认 <b>993</b>）、<b>IMAP 加密方式</b>（SSL 993 / STARTTLS 143 / 不加密）、<b>已发送文件夹名</b>（<b>留空自动探测</b>，如 mailu 默认 <code>Sent</code>）。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>邮件正文同时包含纯文本与 HTML 两个部分（alternatives），收件端展示更友好的排版，同时兼容只看纯文本的客户端。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>7.4 钉钉机器人渠道</h3></summary>
+                    <ul>
+                        <li><b>机器人 Webhook *</b>：形如 <code>https://oapi.dingtalk.com/robot/send?access_token=...</code>。</li>
+                        <li><b>加签密钥 Secret（可选）</b>：仅当机器人在钉钉后台安全设置中开启「加签」时填写，系统自动计算签名。</li>
+                        <li>若机器人使用「自定义关键词」安全策略，请确保通知标题/正文包含该关键词，否则会被钉钉拒收。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>7.5 测试发送（不必先保存）</h3></summary>
+                    <p>两种试发方式：</p>
+                    <ul>
+                        <li>表单左下「<b>试发测试</b>」：按<b>当前尚未保存的表单内容</b>直接发一条测试通知，验证通过再保存，避免反复存了又改。</li>
+                        <li>列表行内「<b>测试发送</b>」：对已保存渠道发一条测试。</li>
+                    </ul>
+                    <p>成功时提示以「测试发送成功」开头（绿色），失败以红色提示具体原因；两次测试都会写入「最近发送记录」。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>7.6 启用开关与删除</h3></summary>
+                    <p>列表行开关实时生效：只有<b>已启用</b>的渠道会接收广播；引用在 STUN 任务中的渠道被停用时自动<b>跳过</b>（不会报错，也不影响穿透）。删除有二次确认；已引用该渠道的任务在下次投递时自动忽略。</p>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-wol">
+                <h2>8. WOL 网络唤醒</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>8.1 原理与前提</h3></summary>
+                    <p>向局域网广播 <b>UDP 魔术包</b> 唤醒已关机/休眠的主机。使用前需确认：</p>
+                    <ul>
+                        <li>目标主机<b>网卡与 BIOS 已开启 Wake on LAN</b>（部分机型还需开启「PCIE/关机供电」与「ErP 关」）。</li>
+                        <li>运行 NexHome 的机器与目标在<b>同一广播域</b>；跨网段/VLAN 需将广播地址指向对应子网的定向广播地址。</li>
+                        <li>魔术包无法穿过 NAT，从外网唤醒需配合端口转发或先唤起一台内网主机再由它转发。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>8.2 新增 / 编辑设备</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:150px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>机器名称</td><td>是</td><td>列表展示用。</td></tr>
+                        <tr><td>MAC 地址</td><td>是</td><td>形如 <code>00:11:22:33:44:55</code>。<b>多网口设备可填多个</b>，用<b>逗号 / 分号 / 换行</b>分隔，唤醒时逐个发送魔术包（任一网口响应即可开机）。</td></tr>
+                        <tr><td>广播地址</td><td>是</td><td>默认 <code>255.255.255.255</code>；子网定向广播可填如 <code>192.168.1.255</code>。</td></tr>
+                        <tr><td>WOL 端口</td><td>—</td><td>默认 <b>9</b>（常见备选为 7）。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>8.3 唤醒与批量唤醒</h3></summary>
+                    <ul>
+                        <li>单台：点行内「⚡ 唤醒」，提示「唤醒魔术包已发送」。</li>
+                        <li>批量：勾选左侧复选框（表头支持<b>全选</b>）后点工具栏「⚡ 批量唤醒选中」，完成后提示会<b>逐台汇总结果</b>；未勾选任何设备时会提示先勾选。</li>
+                        <li>魔术包发送为<b>无连接 UDP</b>，发送成功不等于主机真的开机，请结合指示灯/Ping 验证。</li>
+                    </ul>
+                    <div class="doc-note tip"><b>使用提示</b>本页不会自动定时刷新（避免已勾选状态被重置）；其他设备已在列表但新增的不在本页显示时，切页重新进入即可。</div>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-cert">
+                <h2>9. SSL 证书申请与自动续期</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>9.1 服务商设置（页面顶部表单）</h3></summary>
+                    <p>证书页顶部常驻一张「服务商凭证设置」表单（不参与自动刷新，避免清掉正在输入的内容），改完点「保存设置」：</p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>联系邮箱（可选）</td><td>ACME 账户邮箱，用于到期/失败提醒。Let's Encrypt <b>免费且无需额外凭证</b>。</td></tr>
+                        <tr><td>ZeroSSL EAB KID</td><td rowspan="2">使用 <b>ZeroSSL</b> 时必填：在 ZeroSSL 控制台 → Developer → <b>EAB Credentials</b> 生成。只选 Let's Encrypt 可全部留空。</td></tr>
+                        <tr><td>ZeroSSL EAB HMAC Key</td></tr>
+                        </tbody>
+                    </table>
+                    <p>列表数据每 <b>8 秒</b>自动刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.2 新增 / 编辑证书任务</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>任务名称</td><td>是</td><td>代理中心按任务引用证书时会用到。</td></tr>
+                        <tr><td>证书服务商</td><td>是</td><td><b>Let's Encrypt</b>（默认）或 <b>ZeroSSL</b>。</td></tr>
+                        <tr><td>域名列表</td><td>是</td><td><b>逗号分隔</b>，如 <code>example.com, www.example.com</code>；支持 <code>*.example.com</code> <b>通配域名，但仅 DNS01 可用</b>。</td></tr>
+                        <tr><td>验证方式</td><td>是</td><td><b>HTTP01（自动，需 80 端口）</b> 或 <b>DNS01（TXT 记录验证）</b>。</td></tr>
+                        <tr><td>DNS 解析服务商</td><td>—</td><td>仅 DNS01 显示。默认「手动添加 TXT 记录」；选择已配置的<b>阿里云凭证</b>后实现<b>全自动验证</b>（含通配域名）。域名托管在 <b>ESA</b> 时，需在凭证配置中填写站点 <b>SiteId</b>。</td></tr>
+                        <tr><td>自动续期</td><td>—</td><td>默认开启，即<b>到期前 21 天</b>自动续期。</td></tr>
+                        <tr><td>证书保存目录</td><td>—</td><td>默认 <code>/app/data/ssl</code>（后端下发），不存在时自动新建；<b>以主域名作为文件名</b>保存。</td></tr>
+                        <tr><td>Webhook 地址</td><td>—</td><td>签发成功后推送证书内容到其他系统，留空不推送（见 9.6）。</td></tr>
+                        </tbody>
+                    </table>
+                    <p><b>保存路径实时预览</b>：表单下方会按当前域名与目录实时展示完整文件名。「主域名」取<b>第一个域名</b>，泛域名自动去掉 <code>*.</code> 前缀，非法字符替换为下划线。</p>
+                    <p>产物三个文件：<code>主域名.key</code>（私钥）、<code>主域名.pem</code>（证书）、<code>主域名.fullchain.pem</code>（完整链）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.3 HTTP01 与 DNS01 如何选</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:120px">方式</th><th>前提</th><th>特点</th></tr></thead>
+                        <tbody>
+                        <tr><td>HTTP01</td><td>域名已解析到本机公网 IP，且<b>公网 80 端口能访问到本服务</b>（可经路由器端口转发）</td><td>全自动，无需任何凭证；<b>不支持通配域名</b>。</td></tr>
+                        <tr><td>DNS01</td><td>能修改域名 TXT 记录</td><td>无需开放入站端口，<b>支持通配域名</b>。域名托管在阿里云（云解析或 ESA）时可选凭证实现<b>全自动</b>；否则为<b>半自动</b>：看提示手动加 TXT 再点「完成验证」。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.4 申请、手动 TXT 验证与续期</h3></summary>
+                    <ul>
+                        <li><b>申请 / 续期</b>：按状态显示为「申请」或「续期」，点击后提示「申请已发起，请稍候刷新查看进度」（异步执行）。</li>
+                        <li>状态为<b>待验证</b>（<code>PENDING_VALIDATION</code>）时多出两个按钮：<b>查看TXT</b>（弹窗给出主机记录与记录值）与<b>完成验证</b>（提交给 CA 校验）。到域名服务商添加 TXT 并<b>生效后再点</b>。</li>
+                        <li><b>自动续期</b>：开启后系统在<b>到期前 21 天</b>自动重跑一次签发流程。DNS01 选了阿里云凭证时无人干预即可完续；手动 TXT 方式每次续期都需人工再验一次，建议自动续期场景配好阿里云凭证。</li>
+                        <li>面板 HTTPS 使用的证书续期后会自动重启加载（见 <a href="#sec-settings">第 14 章</a>）；代理中心的 SNI 证书<b>自动热加载</b>，无需重启。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.5 详情、下载与删除</h3></summary>
+                    <ul>
+                        <li><b>详情</b>（仅已签发）：主体、颁发者、域名列表、生效/到期时间、序列号、SHA-256 指纹。</li>
+                        <li><b>下载</b>（仅已签发）：弹窗提供三个链接 <code>fullchain.pem</code>（证书链）/ <code>cert.pem</code>（证书）/ <code>domain.key.pem</code>（私钥）。链接携带会话 Token，<b>请自己保管私钥、不要外泄</b>。</li>
+                        <li><b>删除</b>：二次确认时明确提示「磁盘上的证书文件也会被清理」；若面板 HTTPS 正使用该证书，删除后 HTTPS 会不可用。</li>
+                        <li>列表「状态」列会直接展示失败原因摘要（窄列下可折行），便于定位。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.6 签发成功 Webhook</h3></summary>
+                    <p>以 <code>Content-Type: application/json</code> 的 <b>HTTP POST</b> 发送如下结构（签发/续期成功后自动触发，失败不影响证书，仅在日志告警）：</p>
+                    <pre>{
+  "event": "certificate.issued",
+  "taskId": "任务ID",
+  "name": "任务名称",
+  "domains": ["example.com", "www.example.com"],
+  "notBefore": "生效时间(ISO8601)",
+  "notAfter": "到期时间(ISO8601)",
+  "keyPem": "-----BEGIN PRIVATE KEY----- ...",
+  "certPem": "-----BEGIN CERTIFICATE----- ...",
+  "fullchainPem": "完整证书链 PEM"
+}</pre>
+                    <div class="doc-note warn"><b>安全必提醒</b>请求体含<b>私钥</b>，请仅推送到可信地址并使用 <b>HTTPS</b>；若接收端需校验来源，建议在网关侧配置固定 Token / 白名单。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>9.7 常见问题</h3></summary>
+                    <ul>
+                        <li><b>HTTP01 申请失败</b>：确认域名已解析到本机公网 IP、公网 <b>80 端口</b>能转发到本服务；否则改用 <b>DNS01</b>。</li>
+                        <li><b>通配域名被拒</b>：通配符必须用 DNS01；若选了阿里云自动验证，还需确认凭证对应该域名所在账号且 ESA 托管时已填 SiteId。</li>
+                        <li><b>一直停在待验证</b>：TXT 未生效（查 _acme-challenge 记录）或未点「完成验证」。</li>
+                        <li>详细错误可在「<a href="#sec-logs">操作日志</a>」的 <b>CERT</b> 模块查看。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-proxy">
+                <h2>10. 代理中心（反向代理）</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>10.1 总体能力</h3></summary>
+                    <p>独立监听端口的反向代理，对外提供 <b>HTTP/1.1 + HTTP/2</b>，按<b>域名 + 路径前缀</b>路由到内网后端。HTTPS 依据 <b>SNI</b> 自动匹配「SSL 证书」模块已签发的证书，<b>证书续期后自动热加载</b>。支持 WebSocket 透传、强制 HTTPS、IP 白名单、BasicAuth、限流与 <b>nginx 风格磁盘文件缓存</b>。</p>
+                    <p>默认监听 <b>80 / 443</b>；功能默认<b>关闭</b>，开启后面板其余业务（非代理）流量不受影响。面板数据每 <b>8 秒</b>自动刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.2 服务设置与监听状态</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:190px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>启用代理</td><td>总开关，<b>默认关闭</b>。开启后才绑定端口。</td></tr>
+                        <tr><td>HTTP 端口</td><td>默认 <b>80</b>（1~65535）。</td></tr>
+                        <tr><td>HTTPS 端口</td><td>默认 <b>443</b>（1~65535）。</td></tr>
+                        <tr><td>解析真实来源 IP</td><td><b>默认开启</b>。前置代理/CDN 场景按 <code>X-Forwarded-For</code> / <code>X-Real-IP</code> / <code>CF-Connecting-IP</code> 解析访客真实 IP（影响访问统计与 IP 白名单）。<b>直连暴露且需以真实 socket 对端为准时关闭</b>（否则可被伪造头绕过白名单）。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>保存后右侧实时显示监听结果：<b>已停用</b>（灰）/ <b>HTTP:端口</b>、<b>HTTPS:端口</b>（绿）/ <b>HTTP 未绑定</b>（红，常见为端口被占或无特权）/ <b>HTTPS 未监听</b>（橙，无可用证书）。页顶会常驻一条红色告警条展示最近一次代理错误；保存成功但存在降级时提示为「已应用，注意：…」。点「保存并应用」立即生效，无需重启面板。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.3 SNI 证书清单与重载</h3></summary>
+                    <p>面板列出可供代理使用的已签发证书：<b>任务名称</b>、<b>证书域名 (SAN)</b>、<b>到期状态</b>（有效 / 将到期 N天（<b>不足 15 天</b>）/ 已过期 / 无）、<b>notAfter</b>。为空时提示到「SSL 证书」模块签发。右上「⟳ 重载证书」可手动重新加载磁盘证书（外部替换证书文件后用）。下方一行显示磁盘缓存概览：<code>磁盘缓存：共 N 项，占用 XX</code>。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.4 站点：基础配置页签</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:190px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>站点名称</td><td>是</td><td>列表展示用。</td></tr>
+                        <tr><td>匹配域名</td><td>是</td><td>逗号分隔，支持 <b><code>*.example.com</code> 通配（同时匹配 example.com 本身）</b>。</td></tr>
+                        <tr><td>路径前缀</td><td>—</td><td>如 <code>/api, /portal</code>；<b>留空 = 整域名全部路径</b>。</td></tr>
+                        <tr><td>后端地址</td><td>是</td><td><code>http(s)://host:port</code>，<b>可带路径前缀作为回源基础路径</b>，如 <code>https://192.168.1.10:8443/base</code>。</td></tr>
+                        <tr><td>证书模式</td><td>—</td><td><b>AUTO</b>（自动，按 SNI 匹配，默认）/ <b>TASK</b>（指定证书任务）/ <b>NONE</b>（仅 HTTP，不接 TLS）。</td></tr>
+                        <tr><td>指定证书任务</td><td>—</td><td>仅证书模式为「指定」时显示，下拉列出已签发证书（名称 + 域名）。</td></tr>
+                        <tr><td>强制 HTTPS 跳转</td><td>—</td><td>是：HTTP 请求返回 <b>301</b> 到 https；默认否。</td></tr>
+                        <tr><td>启用站点</td><td>—</td><td>停用后不再匹配路由。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>站点列表列：站点、域名/路径、后端、证书（自动/指定/HTTP，强跳时标注「强跳」）、<b>流量/错误</b>（活跃连接、次/分、错误数、最近错误）、启用开关、操作（编辑 / 删除）。删除站点时<b>会一并清理其磁盘缓存</b>。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.5 站点：高级配置页签</h3></summary>
+                    <p><b>超时与限流</b></p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>范围与说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>连接超时（秒）</td><td>10</td><td>1~120。留空或非法值回退为默认。</td></tr>
+                        <tr><td>读空闲超时（秒）</td><td>300</td><td>最小 5。WebSocket 长连接依赖此值，过小会主动掉连接。</td></tr>
+                        <tr><td>请求体上限（MB）</td><td>0（不限）</td><td>≥ 0，超出返回错误。</td></tr>
+                        <tr><td>限流（QPS）</td><td>0（不限）</td><td>≥ 0，支持 0.1 粒度。</td></tr>
+                        </tbody>
+                    </table>
+                    <p><b>路径与访问控制</b></p>
+                    <ul>
+                        <li><b>路径前缀剥离 stripPrefix</b> 与 <b>路径重写 from/to</b>：<b>语义上二选一</b>，代码会优先 stripPrefix，仅当 stripPrefix 为空且 from/to 都填写时才生效重写。</li>
+                        <li><b>BasicAuth 用户/密码</b>：<b>只填用户不填密码则整个 BasicAuth 不生效</b>（收集时仅当用户非空才写入）。</li>
+                        <li><b>IP 白名单</b>：逗号分隔，支持<b>精确 IP</b>（<code>10.0.0.5</code>）或<b>以点结尾的网段前缀</b>（<code>192.168.1.</code>）；<b>留空 = 不限</b>。开启「解析真实来源 IP」时按转发头判定。</li>
+                        <li><b>后端 TLS 免校验</b>：后端为自签证书 https 时选「是」，否则保持「否」（默认不信任）。</li>
+                    </ul>
+                    <p><b>前端协议（浏览器 → 代理）</b></p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>前端协议</td><td>HTTP/2</td><td>可选 <b>HTTP/1.1（关闭 h2）</b>：该域名的 ALPN 只通告 http/1.1，浏览器即回退 h1。仅影响 HTTPS 监听的 ALPN 通告，明文端口的 h2c prior-knowledge 由客户端显式发起、握手期无域名可判，不受此项约束。</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="doc-note warn"><b>何时该关掉 h2</b>h2 是<b>信用制流控</b>：浏览器给每条流的窗口从 64KB 起步、按它自己观测到的 BDP 缓慢自调，于是<b>单流下载速率会被钉在「窗口 ÷ 往返」</b>，同连接多流还要共享连接级窗口。实测大文件下载经代理 h2 明显低于 h1（同一 LibreSpeed：<b>h2 465~657 Mbit/s，h1 842~939，直连 870~945</b>）。所以<b>纯带宽型站点（测速、大文件下载）建议改为 HTTP/1.1</b>；多小请求 / 多路复用型站点保持 h2 更省连接。改动<b>无需重启</b>，下一次 TLS 握手即生效（浏览器需另建连接，开个新标签即可）。</div>
+                    <p><b>回源协议 / HTTP/2</b></p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>回源协议</td><td>HTTP/1.1</td><td>可选 <b>HTTP/2（h2c / ALPN h2）</b>：明文后端走 h2c prior-knowledge，https 后端经 ALPN 协商 h2；<b>协商不到 h2 直接报 502，不静默降级</b>。</td></tr>
+                        <tr><td>h2 单连接并发流上限</td><td>100</td><td>1~1000。</td></tr>
+                        <tr><td>h2 后端连接上限</td><td>4</td><td>1~1024。一条后端连接并发承载多事务，只开关流不重建连接，显著降低后端 fd 消耗。</td></tr>
+                        </tbody>
+                    </table>
+                    <div class="doc-note warn"><b>HTTP/2 回源的两个限制</b>此模式<b>忽略「启用回源连接池」开关</b>（空闲回收秒数仍用于 h2 连接），且<b>不支持 Upgrade/WebSocket 透传</b>，也不支持面对 HTTP/1.1 前端的 gRPC。需要这两项请回退 HTTP/1.1。</div>
+                    <p><b>回源长连接（upstream keepalive）</b></p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>启用回源连接池</td><td>关闭</td><td>启用则复用空闲连接，关闭则每请求短连接。对 <b>https 回源</b>与<b>跨主机后端</b>收益明显；纯 localhost HTTP 后端收益有限。</td></tr>
+                        <tr><td>空闲连接回收（秒）</td><td>60</td><td>1~3600。</td></tr>
+                        <tr><td>每后端空闲连接上限</td><td>32</td><td>1~4096。</td></tr>
+                        </tbody>
+                    </table>
+                    <p><b>文件缓存</b>（nginx 风格磁盘缓存）</p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>启用缓存</td><td>否</td><td>开启后命中直接从磁盘应答。</td></tr>
+                        <tr><td>缓存时长（秒）</td><td>3600</td><td>≥ 1。</td></tr>
+                        <tr><td>单文件上限（MB）</td><td>8</td><td>超出则不缓存。</td></tr>
+                        <tr><td>站点容量上限（MB）</td><td>256</td><td>超出后淘汰旧项。</td></tr>
+                        <tr><td>缓存扩展名</td><td>空</td><td>逗号分隔，如 <code>js, css, png, jpg, woff2</code>。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>工具栏「🧹 清空缓存」可一键清空<b>全部站点</b>的磁盘缓存文件（有二次确认）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.6 站点：自定义 JSON 页签</h3></summary>
+                    <p>直接编辑 <code>advanced</code> 完整 JSON，用于修改结构化页签未暴露的项，主要是 <b><code>reqHeaders</code> / <code>respHeaders</code></b>（请求/响应头改写）。<b>三个页签自动双向同步</b>：从「高级配置」切到「自定义 JSON」时把控件当前值写入 JSON；反向切换时先做解析，<b>非法 JSON 会直接拦截切换</b>并在下方红色提示解析错误；保存时也会按当前页签做一次收集与格式/字段校验。</p>
+                    <div class="doc-note tip"><b>建议</b>先用结构化页签完成 90% 配置，只在需要改写报文头或多源组合时才进 JSON 页，避免手敲错字段名。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.7 访问统计</h3></summary>
+                    <p>代理会为每个站点记录访问流水，包括每日总访问次数、<b>网站访问 TOP10</b> 与基于内置 ip2region 库的<b>来源地区 TOP10</b>，展示在「<a href="#sec-dashboard">总览仪表盘</a>」的最近 7 天统计区。未启用代理或未配站点时该区为空。</p>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-docker">
+                <h2>11. Docker 容器管理与运维</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>11.1 连接前提</h3></summary>
+                    <p>本模块直连 Docker Daemon。两种接入方式：</p>
+                    <ul>
+                        <li><b>挂载 socket</b>（推荐）：<code>-v /var/run/docker.sock:/var/run/docker.sock</code>，并设 <code>DOCKER_HOST=unix:///var/run/docker.sock</code>。</li>
+                        <li><b>远程 Daemon</b>：环境变量 <code>DOCKER_HOST</code> 指向 <code>tcp://主机:2375</code>，需保证网络可达与权限。</li>
+                    </ul>
+                    <p><b>未连接时</b>，页面降级为「🐳 Docker 未连接」提示页，展示具体错误原因与可直接复制的 <code>docker run</code> 挂载示例；即使未连接也会每 10 秒重试，挂载好后无需重启面板。工具栏右侧常驻显示当前<b>连接地址</b>。</p>
+                    <div class="doc-note warn"><b>权限说明</b>容器内进程需有 socket 读写权限（默认 root 满足）；非 root 用户需将其加入宿主 <code>docker</code> 组对应的 gid。报 <b>Permission denied</b> 即为此问题。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.2 顶部统计卡</h3></summary>
+                    <p>五张卡汇总宿主 Docker 整体概况：<b>Docker 版本</b>（含 API 版本、OS/架构）、<b>运行 / 总容器</b>、<b>镜像</b>（数量 · 占用空间）、<b>卷</b>（数量 · 占用空间）、<b>宿主 OS</b>（内核版本 · 总内存）。容器页每 <b>10 秒</b>、Compose 页每 <b>15 秒</b>自动刷新（仅重绘统计卡与数据行，保留工具栏/表头）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.3 容器列表</h3></summary>
+                    <p>工具栏上「📦 容器列表 / 🧩 Compose 项目」两页签切换，右侧提供「🧹 资源清理」与「刷新」。</p>
+                    <p><b>可点击表头排序</b>的列（▲/▼ 切换升降序，本地重排不重新拉数据）：<b>容器名称、镜像、状态、内存、磁盘、容器 IP</b>；默认按<b>创建时间倒序</b>。内存/磁盘按数值比较，IP 按四段数值比较（空值恒排最前）。不可排序列：暴露端口、Compose、操作。</p>
+                    <ul>
+                        <li><b>容器名称</b>：名称 + 短 ID · 状态文本。</li>
+                        <li><b>状态徽章</b>：running（绿）/ created（蓝）/ restarting・paused（橙）/ exited・dead（红）。</li>
+                        <li><b>内存</b>：<code>已用 / 限额</code> 加占用比例条；<b>未设限额或非运行中显示「-」</b>。</li>
+                        <li><b>磁盘</b>：容器<b>可写层</b>大小（鼠标悬停提示「可写层」）。</li>
+                        <li><b>容器 IP</b>：主网卡地址，下方小字为网络名。</li>
+                        <li><b>暴露端口</b>：<code>宿主IP:宿主端口→容器端口/协议</code>（未发布宿主端口时仅显示容器端口）。</li>
+                        <li><b>Compose</b>：<code>项目/服务</code> 名，非 compose 容器为「-」。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.4 容器运维：启动 / 停止 / 重启 / 日志</h3></summary>
+                    <p>行内按状态展示不同按钮：运行中提供「<b>停止</b> / <b>重启</b> / <b>日志</b>」，停止态提供「<b>启动</b> / <b>日志</b>」；「详情」弹窗顶部也有一组同样的操作按钮。</p>
+                    <ul>
+                        <li><b>二次确认</b>：每个起停/重启操作都会弹出确认，正文提醒「该操作将直接作用于宿主机上的容器」；<b>启动</b>为常规样式，<b>停止/重启</b>为危险样式。</li>
+                        <li><b>日志查看</b>：默认拉取最近 <b>200 行</b>，弹窗内可在 <b>100 / 200 / 500 / 1000 / 2000</b> 行之间切换；内容以等宽可滚动块展示，无输出时提示「该容器暂无日志输出」。只展示最近日志，拉取过多会影响性能。</li>
+                    </ul>
+                    <div class="doc-note warn"><b>高权限操作</b>起停/重启/清理直接作用于宿主 Docker，属高权限操作，请谨慎使用；建议仅在可信环境启用本能力。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.5 容器详情</h3></summary>
+                    <p>「详情」弹窗内容非常完整，适合排查问题：基础信息（容器 ID、镜像、运行状态/启动时间或退出码/结束时间、<b>重启次数</b>与<b>重启策略</b>、网络模式、Compose 归属含工作目录与编排文件）；<b>启动命令</b>（Entrypoint / Cmd / 工作目录）；<b>资源限制</b>（内存上限、CPU 核数，无限制时明说）；<b>实时资源</b>（内存占用比例、CPU 百分比与可见核数、网络收发累计、进程数；仅运行中且设了内存限额时展示）；<b>网络</b>（各网络下 IP / 网关 / MAC）；<b>端口映射</b>；<b>挂载</b>（类型 / 宿主路径 / 容器内路径 / 读写模式）；<b>环境变量</b>（键值列对齐）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.6 Compose 项目</h3></summary>
+                    <p>按容器上的 compose 标签<b>自动聚合</b>为项目视图，列：项目名、工作目录、配置文件、<b>运行/总数</b>、服务列表徽章、镜像数，以及两个操作：「<b>查看容器</b>」（项目内容器清单，可逐个进详情）与「<b>查看编排</b>」（直接展示 compose 编排文件内容）。未发现项目时提示「仅统计携带 compose 标签的容器」。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.7 资源清理</h3></summary>
+                    <p>「🧹 资源清理」当前针对<b>无标签（悬空）镜像</b>，采用<b>先看清单再确认</b>两步：先预览列表（镜像名称 / 标签 / <b>可回收</b>），确认后才执行，弹窗标题下方给出「将清理 N 个，预计可回收约 XX（不可恢复）」。</p>
+                    <ul>
+                        <li>总量按<b>实际可回收量</b>（Size − 共享层）估算，而非虚拟大小之和；存在共享层时额外显示「虚拟 XX」作参考。</li>
+                        <li>悬空镜像无 RepoTag，此时<b>以镜像短 ID 作为名称</b>展示。</li>
+                        <li>无待清理项时直接提示「当前没有无标签（悬空）镜像需要清理」，不会弹确认。</li>
+                        <li>完成后提示：<code>清理完成：删除镜像 N 个，回收 XX</code>。<b>实际回收空间以清理结果为准</b>。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>11.8 常见问题</h3></summary>
+                    <ul>
+                        <li><b>提示未连接</b>：容器部署遗漏了 <code>-v /var/run/docker.sock:/var/run/docker.sock</code>。</li>
+                        <li><b>Permission denied</b>：容器内用户无 socket 读写权限（见 11.1）。</li>
+                        <li><b>远程模式连不上</b>：检查 <code>DOCKER_HOST</code> 与 2375 端口网络连通性。</li>
+                        <li>错误详情可在「<a href="#sec-logs">操作日志</a>」的 <b>DOCKER</b> 模块查看。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-logs">
+                <h2>12. 操作日志</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>12.1 列表与检索</h3></summary>
+                    <p>全模块运行日志集中在此，四列：<b>时间</b>、<b>模块</b>、<b>级别</b>、<b>内容</b>。<b>ERROR 行红色高亮、WARN 行橙色高亮</b>，一眼定位异常。</p>
+                    <ul>
+                        <li><b>模块筛选</b>：下拉可选 全部模块 / SYSTEM / AUTH / DDNS / STUN / WOL / CERT / NAV / DOCKER；切换后回到第 1 页。</li>
+                        <li><b>分页</b>：每页固定 <b>50 条</b>，右上显示「共 N 条」，下方「上一页 / 第 X / Y 页 / 下一页」。</li>
+                        <li><b>自动刷新</b>：默认勾选，每 <b>5 秒</b>只重拉当前页数据行（<b>不重建工具栏</b>，保留模块选择与勾选状态）；取消勾选即停止轮询，便于逐条阅读。</li>
+                        <li>手动点「刷新」可立即重拉当前页。</li>
+                    </ul>
+                    <div class="doc-note tip"><b>说明</b>代理、监控、通知等模块的日志以 SYSTEM 级别统一记录（通知投递结果在「告警通知」页的最近发送记录中查看更直观）。日志只读，不提供删除与导出。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>12.2 典型排查路径</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:230px">现象</th><th>先看哪里</th></tr></thead>
+                        <tbody>
+                        <tr><td>DDNS 同步失败 / 权限错误</td><td><b>DDNS</b> 模块日志（含阿里云 API 返回原文）。</td></tr>
+                        <tr><td>STUN 任务不启动、无映射</td><td><b>STUN</b> 模块日志（NAT 探测、UPnP、打洞过程）。</td></tr>
+                        <tr><td>证书申请/续期失败</td><td><b>CERT</b> 模块日志（CA 返回的错误类型与详情）。</td></tr>
+                        <tr><td>面板启动后端口变了</td><td><b>SYSTEM</b> 日志（端口被占、自愈回退到哪个端口）。</td></tr>
+                        <tr><td>反复被踢回登录页</td><td><b>AUTH</b> 日志（失败锁定、单点登录顶号）。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-diag">
+                <h2>13. 内存诊断</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>13.1 用途与使用思路</h3></summary>
+                    <p>用于定位「<b>内存突然上升且不释放</b>」。推荐三步：先看<b>实时内存分解</b>判断涨在堆、堆外还是 RSS → 再点「<b>分析内存跳变</b>」自动找出曲线跳升的时间点 → 页面会把该时刻前后的 <b>op_log 事件</b>对齐展示，直接看到“是什么动作引起的”。</p>
+                    <p>采样自<b>本次进程启动</b>，每 <b>10 秒</b>一个样本，运行越久时间线越完整。默认<b>自动刷新</b>已勾选（10 秒一次）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.2 实时内存分解</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:180px">指标</th><th>含义与参考上限</th></tr></thead>
+                        <tbody>
+                        <tr><td>容器内存</td><td>当前用量 / cgroup 上限，带比例条（<b>≥60% 变橙、≥85% 变红</b>）。</td></tr>
+                        <tr><td>进程 RSS</td><td>进程常驻物理内存 / 容器上限；<b>非 Linux 环境不可读</b>时显示「（非 Linux 不可读）」。</td></tr>
+                        <tr><td>JVM 堆</td><td>已用 / 已提交 / 上限三个值。</td></tr>
+                        <tr><td>元空间 Metaspace</td><td>进度条参考上限按 <b>256 MB</b> 绘制。</td></tr>
+                        <tr><td>CodeCache</td><td>参考上限按 <b>128 MB</b> 绘制。</td></tr>
+                        <tr><td>非堆合计</td><td>参考上限按 <b>512 MB</b> 绘制。</td></tr>
+                        <tr><td>NIO 直接缓冲</td><td>已用 / 容量，并给出缓冲对象个数（DirectByteBuffer）。</td></tr>
+                        <tr><td>映射缓冲</td><td>MappedByteBuffer，参考上限按 <b>64 MB</b> 绘制。</td></tr>
+                        <tr><td>线程 / GC</td><td>当前线程数 · GC 次数 / 耗时毫秒。</td></tr>
+                        <tr><td>代理文件缓存</td><td>代理中心磁盘缓存项数与占用（磁盘，不占内存）。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>下方小字给：JVM 名称、运行时长、堆上限、以及 <b>NMT 是否已开启</b>。未开启时提示“堆外仅能看到 NIO 直接缓冲，Netty 池化堆外需开 NMT 才可见”。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.3 内存时间线</h3></summary>
+                    <p>双折线图：<b>容器内存</b>（青）与 <b>JVM 堆</b>（绿）。纵轴满刻度自动为曲线峰值×1.1，图例显示当前值与上限、样本数与时间跨度。鼠标悬停出现<b>十字准线 + 气泡</b>，给出该样本点的精确时间与两个值（靠近右缘时气泡自动翻到左侧避免溢出）。至少需 <b>2 个样本</b>才成图，否则提示稍后再刷新。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.4 分析内存跳变</h3></summary>
+                    <p>工具栏「分析指标」可选 <b>容器内存（含堆外/RSS）</b> 或 <b>JVM 堆</b>，点「分析内存跳变」后生成四块结果：</p>
+                    <ol>
+                        <li><b>结论摘要</b>：时间跨度内从多少变到多少、净增多少 MB；若检测到跳变，指出<b>最大单周期跳升发生的时间</b>（如 42.3 MB → 78.1 MB，<b>+35.8 MB</b>）；曲线平稳时明确提示“未检测到明显的单周期跳升”。样本不足 2 个时提示无法定位。</li>
+                        <li><b>跳变点前后日志</b>：展示跳变时刻<b>前后各 2 分钟</b>的 op_log 记录（时间/模块/级别/内容，ERROR 红、WARN 橙）。</li>
+                        <li><b>关键事件</b>：自动挑出缓存加载 / 重启 / 监听启动等里程碑事件。</li>
+                        <li><b>日志密度</b>：每分钟条数的迷你柱状，悬停看具体分钟，并总结“共 N 分钟有日志，单分钟峰值 M 条”。</li>
+                    </ol>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.5 堆外原生内存明细（NMT）</h3></summary>
+                    <p>需启动时带 <code>-XX:NativeMemoryTracking=summary</code>（官方镜像的 Dockerfile <b>已默认开启</b>）。点「加载 / 刷新明细」才拉取（不常驻、服务端带缓存，约 60 秒），展示各类别的<b>已提交 / 保留</b>，并给出与<b>启动基线的变化表</b>：按增幅排序，增长最多的类别（正数红字 +N MB，减少绿字）即“内存不释放的嫌疑人”。合计行提醒：JVM 堆只是其中一项，<b>Netty 池化等堆外分配多归在 Internal / Other</b>。未开启 NMT 时此处直接给出原因说明。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.6 导出快照</h3></summary>
+                    <p>「导出快照 JSON」把当前完整采样数据（实时分解 + 全部历史样本）下载为 <code>nexhome-memdiag-&lt;时间戳&gt;.json</code>，便于存档对比或提交给他人协助分析。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>13.7 阅读建议</h3></summary>
+                    <ul>
+                        <li><b>堆涨而容器内存不涨</b>：多为堆内对象未回收，重点看 GC 次数与堆上限（本镜像按 <code>MaxRAMPercentage=40</code> 限制）。</li>
+                        <li><b>堆不涨但 RSS / 容器内存涨</b>：堆外问题，加载 NMT 明细看 Internal/Other、Thread、Symbol 等类别的增幅。</li>
+                        <li>NIO 直接缓冲接近容量时，考虑代理大文件与并发（镜像已按 <code>MaxDirectMemorySize=64m</code> 封顶，并设 <code>MALLOC_ARENA_MAX=2</code> 限制 glibc arena）。</li>
+                        <li>容器限额建议 <b>≥512MB</b>；频繁 OOM 先看本页确认是堆内还是堆外，再相应调整。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-settings">
+                <h2>14. 系统设置</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>14.1 系统信息</h3></summary>
+                    <p>展示：版本、Java 版本、操作系统、运行时长（小时 + 分钟）、<b>内存占用</b>（<b>系统物理内存</b>，与顶栏监控同源，避免误读为 JVM 堆）与<b>堆内存</b>（JVM 堆已用/上限与百分比）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.2 访问与安全设置</h3></summary>
+                    <div class="doc-note warn"><b>默认只读</b>该表单默认处于<b>只读查看</b>状态，需先点「编辑」才能修改，再「保存并应用」；未保存时点「取消」会恢复服务端当前配置。保存前会弹出确认，要你在<b>保存前就牢记新访问地址</b>。</div>
+                    <table>
+                        <thead><tr><th style="width:190px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>HTTP 端口 *</td><td>默认 <b>8090</b>（1~65535）。若与当前实际监听端口不一致，下方红字会提示「当前实际监听 XXXX（配置端口被占用，启动时已临时改用）」。</td></tr>
+                        <tr><td>HTTPS</td><td>关闭 / 开启。开启后才显示下面三项。</td></tr>
+                        <tr><td>HTTPS 端口</td><td>默认 <b>8443</b>；<b>不能与 HTTP 端口相同</b>（前端直接拦截提示）。</td></tr>
+                        <tr><td>HTTP 跳转 HTTPS</td><td>选“是”时 HTTP 请求重定向到 HTTPS。</td></tr>
+                        <tr><td>HTTPS 证书</td><td>默认「<b>自动选择（有效期最长的有效证书）</b>」，也可指定某个已签发任务。选自动时下拉下方会显示<b>当前使用的证书与有效期</b>；证书续期后<b>自动加载新证书</b>。若开了 HTTPS 但证书文件缺失或端口被占，会红字提示「HTTPS 未生效，已临时降级为仅 HTTP 访问」。</td></tr>
+                        <tr><td>安全入口路径（留空关闭）</td><td>如 <code>my-secret-entry</code>，限 <b>4~64 位字母、数字、下划线与中划线</b>。开启后必须通过 <code>http://地址:端口/入口路径/</code> 访问面板，<b>其余路径一律 404</b>。</td></tr>
+                        </tbody>
+                    </table>
+                    <ul>
+                        <li>保存后内置 Web 服务<b>自动重启</b>应用新配置，<b>绑定失败自动回滚</b>；重启后<b>需重新登录</b>，弹窗会给出新地址并 <b>6 秒倒计时自动跳转</b>。</li>
+                        <li>此处配置<b>优先于</b> <code>nexhome.properties</code>。</li>
+                        <li>进程启动时若端口已被占用，会自动改用备选端口继续提供面板（原因与实际端口见 HTTP 端口下方红字），<b>不会改写此处配置值</b>。</li>
+                        <li>面板顶部如有上一次应用失败的错误，会在表单上方以红色 ⚠️ 条展示。</li>
+                    </ul>
+                    <div class="doc-note warn"><b>开启安全入口前必读</b>保存即重启且地址变更，旧地址立即不再生效。若忘记入口路径，需按 <a href="#sec-faq">第 16 章</a> 的方式直接修改数据库恢复。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.3 服务商凭证配置</h3></summary>
+                    <p>集中维护云服务商 AccessKey，<b>DDNS 同步</b>与 <b>SSL 证书 DNS01 自动验证</b>在表单中直接下拉引用，<b>修改后所有引用它的任务自动生效</b>。目前服务商仅支持<b>阿里云（云解析 / ESA）</b>。</p>
+                    <p>字段：<b>配置名称 *</b>（如“阿里云主账号”）、<b>服务商 *</b>、<b>ESA 站点 SiteId</b>（仅阿里云显示且可选，<b>域名托管在 ESA 做 DNS01 自动验证时必填</b>）、<b>AccessKey ID *</b>、<b>AccessKey Secret *</b>（密码型输入）。列表中 AccessKey ID <b>脱敏展示</b>（前 4 后 4，中间以 ****）。</p>
+                    <p><b>删除凭证时的联动处理</b>（确认弹窗会明说）：引用它的 <b>DDNS 任务回填当前凭证</b>继续可用；<b>证书任务回到手动添加 TXT 模式</b>；<b>STUN 任务的 ESA 同步失效</b>。建议删除前先检查引用。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.4 修改登录密码</h3></summary>
+                    <p>原密码 * + 新密码 *（<b>至少 12 位</b>，表单已做 minlength 校验）+ 确认新密码 *，两次不一致会直接提示。修改成功后<b>清空本地会话并回到登录页</b>（所有已登录设备都需重新登录）。密码以 <b>SHA-256</b> 摘要存储，系统不可反向查看。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.5 登录安全设置</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:250px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>最大失败次数</td><td><b>1~100</b>，默认 <b>3</b>。</td></tr>
+                        <tr><td>锁定时长（分钟）</td><td><b>1~1440</b>，默认 <b>30</b>。</td></tr>
+                        </tbody>
+                    </table>
+                    <p>达上限后该<b>来源 IP</b> 被临时锁定指定时长，成功登录后计数清零；失败计数为<b>进程内存态，重启后归零</b>。锁定触发时推送 <code>auth.lockout</code> 告警。系统强制<b>单点登录</b>。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.6 配置备份</h3></summary>
+                    <p>「⬇ 下载配置备份」导出当前数据库（所有任务与配置）的<b>一致性快照文件</b>（基于 <code>VACUUM INTO</code>，不会读到中途写入的半成品数据），用于离线备份与迁移。<b>本期仅提供下载导出，不提供导入恢复</b>；恢复需手工替换 <code>data/nexhome.db</code>。</p>
+                    <div class="doc-note tip"><b>建议</b>改密码、改端口、改安全入口前先备份一次；忘记密码时也可凭备份避免丢失全部配置。</div>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-deploy">
+                <h2>15. 部署与升级</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>15.1 Docker Compose 部署（推荐）</h3></summary>
+                    <p>官方镜像 <code>babyfly/nex-home</code>（多架构 linux/amd64 与 linux/arm64）。典型 compose（host 网络 + docker.sock 挂载）：</p>
+                    <pre>services:
+  nex-home:
+    image: babyfly/nex-home:latest
+    container_name: nex-home
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - TZ=Asia/Shanghai
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    deploy:
+      resources:
+        limits:
+          memory: 512m   # 推荐 512MB 以上
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+    healthcheck:
+      # 镜像无 curl，改用 bash /dev/tcp 探测端口
+      test: ["CMD-SHELL", "exec 3&lt;&gt;/dev/tcp/127.0.0.1/8090 &amp;&amp; echo -n '' &gt;&amp;3"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s</pre>
+                    <p>启动：<code>docker compose up -d</code>，然后访问 <code>http://127.0.0.1:8090</code>。</p>
+                    <div class="doc-note warn"><b>healthcheck 切勿用 curl</b>运行镜像基于 eclipse-temurin，<b>不含 curl / wget</b>，用 <code>curl -f</code> 会使容器始终处于 unhealthy。</div>
+                    <p><b>为何用 host 网络</b>：DDNS 需直接读网卡出口 IP、STUN 穿透与 UPnP 需真实网卡、代理要监听 80/443、WOL 需广播。若采用桥接网络，需自行做端口映射且部分能力（广播、UPnP、网卡 IP）会受限。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>15.2 裸机 jar 运行</h3></summary>
+                    <p>需 <b>JDK 25</b>，直接 <code>java -jar nexhome.jar</code>。程序在<b>运行目录</b>（jar 所在目录）自动创建：配置文件 <code>data/nexhome.properties</code>、数据库 <code>data/nexhome.db</code>、证书与上传目录等。初始密码同样打印到控制台。</p>
+                    <p>镜像内置的运行时参数（供裸机部署参考）：<code>MaxRAMPercentage=40</code>（堆按容器限额自动计算，无需固定 -Xmx）、<code>UseSerialGC</code>、<code>Xss512k</code>、<code>MaxMetaspaceSize=128m</code>、<code>ReservedCodeCacheSize=64m</code>、<code>MaxDirectMemorySize=64m</code>（封顶堆外直接内存）、<code>NativeMemoryTracking=summary</code>（供内存诊断页拆分堆外）、环境变量 <code>MALLOC_ARENA_MAX=2</code>（收敛 glibc arena，避免 RSS 涨后不回落）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>15.3 配置文件 nexhome.properties</h3></summary>
+                    <p>仅包含少量基础项（业务配置全部在 SQLite 中），首次启动自动生成：</p>
+                    <table>
+                        <thead><tr><th style="width:230px">配置项</th><th style="width:110px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td><code>server.port</code></td><td>8090</td><td>Web 服务端口。<b>面板「系统设置」中的配置优先于此文件</b>。</td></tr>
+                        <tr><td><code>server.port.autoFallback</code></td><td>5</td><td>启动期<b>端口自愈跨度</b>：期望端口被占时向后依次探测 +1…+跨度能否绑定，全部不可用才由内核分配随机端口（保证面板可达、进程不因 restart 反复重启）。配 <b>0</b> 关闭连续探测、直接回退随机端口；负数按 5 处理。</td></tr>
+                        <tr><td><code>server.web.dir</code></td><td>空</td><td>可选：<b>外部前端静态目录</b>（用正斜杠）。配置且目录存在时，静态资源优先从该目录读取而非 jar 内置（开发期改页面不必重新打包）。相对路径基于运行目录解析。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>15.4 数据目录与迁移</h3></summary>
+                    <ul>
+                        <li><b>容器部署</b>请挂载 <code>./data:/app/data</code>（或命名卷），否则重建容器会丢失全部配置。</li>
+                        <li>备份两种途径：面板「<a href="#sec-settings">系统设置 → 配置备份</a>」导出一致性快照；或直接停容器后备份整个 <code>data</code> 目录。</li>
+                        <li><b>迁移</b>：新机器起同版本镜像 → 把备份的 <code>nexhome.db</code>（或整个 data 目录）放入挂载目录 → 启动。注意证书保存目录与导航图标也在 data 下，建议整目录迁移。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>15.5 升级</h3></summary>
+                    <ol>
+                        <li>先在「系统设置 → 配置备份」导出一份快照。</li>
+                        <li><code>docker compose pull</code> 后 <code>docker compose up -d</code>（镜像 tag 固定 latest 时先 pull）。</li>
+                        <li>升级后首次启动会从控制台打印一次当前密码相关的初始化信息，<b>已有数据库不会被重置</b>，密码保持为上次设置的值。</li>
+                        <li>若升级后页面样式异常，静态资源带 <code>no-cache</code>，一般强制刷新（Ctrl+F5）即可。</li>
+                    </ol>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>15.6 对外暴露的安全建议</h3></summary>
+                    <ul>
+                        <li>启用<b>安全入口路径</b>，避免面板根路径被扫描与爆破。</li>
+                        <li>保持<b>失败锁定</b>开启（默认 3 次 / 30 分钟），并及时配置通知渠道以收到 <code>auth.lockout</code> 告警。</li>
+                        <li>启用 <b>HTTPS</b>：先在 SSL 证书模块签发（HTTP01 需公网 80，否则用 DNS01），再在访问设置中开启。</li>
+                        <li>不要把 Docker 能力当对外接口暴露：<code>docker.sock</code> 等于宿主 root，代理站点不要反代面板到不可信网络。</li>
+                        <li>代理直连公网且开启白名单 / BasicAuth 时，建议<b>关闭</b>「解析真实来源 IP」，避免伪造转发头绕过。</li>
+                    </ul>
+                </details>
+            </section>
+
+            <section class="doc-sec" id="sec-faq">
+                <h2>16. 常见问题（FAQ）</h2>
+                <details class="doc-sub-sec" open>
+                    <summary><h3>16.1 忘记登录密码</h3></summary>
+                    <ol>
+                        <li>停止程序（或容器）。</li>
+                        <li>删除 <code>data/nexhome.db</code> 中 <code>app_config</code> 表的 <code>auth.password</code> 行。</li>
+                        <li>重启，系统将<b>重新随机生成一个初始密码并打印到控制台</b>，用该密码登录后立即改密。</li>
+                    </ol>
+                    <div class="doc-note warn"><b>注意</b>上述做法仅影响密码一项；但若直接删整个数据库文件会<b>丢失全部配置</b>。因此强烈建议平时用「配置备份」定期导出。</div>
+                    <p><b>忘记安全入口路径</b>同样可通过查询/清空 <code>app_config</code> 中的访问配置项恢复（或直接换未设入口的备份库恢复）。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>16.2 登不上：一直被锁定或反复回登录页</h3></summary>
+                    <ul>
+                        <li><b>提示锁定</b>：该来源 IP 连续失败达上限。等锁定时长过去（默认 30 分钟），或<b>重启进程</b>（失败计数为内存态，重启即归零）。</li>
+                        <li><b>反复被踢回登录页</b>：系统强制<b>单点登录</b>，另一台设备/标签页登录后会注销之前的会话；属正常行为。Token 有效期 24 小时，过期也需重登。</li>
+                    </ul>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>16.3 访问与面板失联</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:250px">现象</th><th>原因与处理</th></tr></thead>
+                        <tbody>
+                        <tr><td>启动后端口不是 8090</td><td>期望端口被占，已<b>端口自愈</b>到备选端口或随机端口。看控制台实际端口，或到「系统设置 → 访问与安全设置」看 HTTP 端口下方红字提示。</td></tr>
+                        <tr><td>改了安全入口后原地址全 404</td><td>预期行为。必须用 <code>http://地址:端口/入口路径/</code> 访问（<b>结尾斜杠不能省</b>，<code>/入口</code> 会 302 补上）。</td></tr>
+                        <tr><td>开了 HTTPS 但访问不亮</td><td>面板会提示「HTTPS 未生效，已临时降级为仅 HTTP 访问」：检查证书文件是否存在（已到「SSL 证书」页签发且保存目录可读）与 HTTPS 端口是否被占。</td></tr>
+                        <tr><td>改完配置页面打不开</td><td>保存即重启。若新地址错，系统会在<b>绑定失败时自动回滚</b>旧配置；若地址对但忘了，用旧地址重试或按 16.1 查库。</td></tr>
+                        <tr><td>容器始终 unhealthy</td><td>healthcheck 用了 <code>curl</code>（镜像不含）；改用 <code>bash /dev/tcp</code> 探测。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>16.4 各模块常见失败</h3></summary>
+                    <table>
+                        <thead><tr><th style="width:230px">问题</th><th>排查要点</th></tr></thead>
+                        <tbody>
+                        <tr><td>HTTP01 证书申请失败</td><td>域名已解析到本机公网 IP？公网 <b>80</b> 能转发到本服务？否 → 改用 <b>DNS01</b>。</td></tr>
+                        <tr><td>DDNS 同步报权限错误</td><td>AccessKey 权限策略是否包含对应产品（云解析 DNS / ESA）的<b>解析读写权限</b>；建议用只授予必要权限的 RAM 子账号。</td></tr>
+                        <tr><td>STUN 探测无响应</td><td>更换 STUN 服务器（如 <code>stun.qq.com:3478</code>、<code>stun.miwifi.com:3478</code>），并确认本机可访问公网 <b>UDP</b>。</td></tr>
+                        <tr><td>TCP 任务运行中但外网访问不通</td><td>① 探测 NAT 类型，<b>对称型无法纯 STUN 穿透</b>，改用路由器端口转发；② <b>受限锥形</b>需填「对端公网地址」主动打洞；③ 确认主机防火墙已放行监听端口（Windows：允许 Java 通过专用/公用网络的入站规则）。详见 <a href="#sec-stun">5.10</a>。</td></tr>
+                        <tr><td>Docker 模块提示未连接</td><td>缺 <code>-v /var/run/docker.sock:/var/run/docker.sock</code>；报 Permission denied 为容器内用户无 socket 权限；远程模式查 <code>DOCKER_HOST</code> 与 2375 连通性。</td></tr>
+                        <tr><td>通知发不出去</td><td>用渠道表单的「<b>试发测试</b>」看具体错误（SMTP 常见为用了登录密码而非<b>授权码</b>、端口与加密方式不匹配；钉钉常见为未填加签 Secret 或关键词拦截）。发送记录与失败原因在「最近发送记录」（最多 10 条）。</td></tr>
+                        <tr><td>监控频繁误报 DOWN</td><td>适当调大「超时」（经 VPN/穿透建议 ≥5 秒，实际最少 3 秒生效）与「连续失败告警阈值」；UDP 探测本身为“尽力”，无回包不一定代表不可达。</td></tr>
+                        <tr><td>导航卡片内外网地址不对</td><td>面板经域名/反代访问时服务端看到的源 IP 可能均为内网代理地址，请配置「<b>内网探测链接</b>」；HTTPS 面板下探测链接不能是 <code>http://</code>（混合内容拦截）。详见 <a href="#sec-nav">3.5</a>。</td></tr>
+                        <tr><td>上传图标/背景失败</td><td>图标业务层限 <b>2MB</b>，上传接口单请求上限 <b>8MB</b>；被引用的图片不允许删除。</td></tr>
+                        </tbody>
+                    </table>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>16.5 内存占得多 / OOM 重启</h3></summary>
+                    <ol>
+                        <li>先看顶栏与「总览」的内存颜色（≥60% 橙、≥85% 红）确认趋势。</li>
+                        <li>进「<a href="#sec-diag">内存诊断</a>」：堆涨 → 看 GC 与堆上限（默认为容器限额的 40%）；堆不涨但 RSS 涨 → 加载 NMT 明细看堆外类别增幅。</li>
+                        <li>结合「分析内存跳变」把跳升时间与 op_log 对齐，定位是哪个动作（代理大文件、批量任务、测速）引起。</li>
+                        <li>适当上调容器内存限额（推荐 <b>≥512MB</b>）；若 NIO 直接缓冲长期贴 64MB 上限，考虑降低代理并发或调高 <code>MaxDirectMemorySize</code>。</li>
+                    </ol>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>16.6 使用文档页本身打不开</h3></summary>
+                    <p>本页作为静态资源随系统一同打包（<code>docs.html</code> / <code>docs.css</code> / <code>docs.js</code>），面板顶栏「📖 使用文档」按钮与页内「← 返回面板」均采用<b>相对路径</b>。因此：</p>
+                    <ul>
+                        <li><b>根模式</b>：直接访问 <code>http://地址:端口/docs.html</code>。</li>
+                        <li><b>安全入口模式</b>：必须带入口前缀，如 <code>http://地址:端口/入口路径/docs.html</code>；从面板内点按钮跳转会自动沿用当前前缀，无需手改。</li>
+                        <li>若样式丢了（无目录、无排版），确认 <code>docs.css</code> 与 <code>docs.js</code> 可访问并强制刷新；静态资源带 <code>no-cache</code>，无需清缓存。</li>
+                        <li>左侧目录为空时，说明 <code>docs.js</code> 未加载成功（检查是否被中间代理缓存或拦截）。</li>
+                    </ul>
+                    <div class="doc-note tip"><b>提示</b>本页为纯静态文档，<b>不发送任何 API 请求</b>，因此无需登录也不会泄露配置；可单独保存为 PDF 离线查阅（点左侧「打印 / 存 PDF」）。</div>
+                </details>
+            </section>
+
+            <footer class="doc-foot">
+                <p>NexHome 联枢 · 使用文档。本文档与系统一同打包部署，离线也可阅读（建议用浏览器“打印 → 保存为 PDF”）。</p>
+                <p class="muted">若发现描述与实际版本不符，请以面板现场提示与「操作日志」为准。</p>
+                <div class="doc-foot-actions">
+                    <a class="doc-btn" href="index.html">← 返回面板</a>
+                    <button type="button" class="doc-btn" onclick="window.scrollTo({top:0,behavior:'smooth'})">回到顶部</button>
+                </div>
+            </footer>
+
+        </article>
+    </main>
+</div>
+
+<script src="docs.js"></script>
+</body>
+</html>

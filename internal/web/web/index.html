@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NexHome 联枢 · 内网节点守护工具</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+</head>
+<body>
+<!-- 登录页 -->
+<div id="loginView" class="login-wrap hidden">
+    <div class="login-card">
+        <div class="login-logo">🏠</div>
+        <h1>NexHome 联枢</h1>
+        <p class="muted">一站式内网节点守护工具</p>
+        <form id="loginForm">
+            <input type="password" id="loginPwd" placeholder="请输入登录密码" autocomplete="current-password" required>
+            <button type="submit" class="btn primary block">登 录</button>
+        </form>
+        <p class="muted small">首次使用默认密码查看控制台 · <a href="docs.html" target="_blank" rel="noopener">使用文档</a></p>
+    </div>
+</div>
+
+<!-- 主界面 -->
+<div id="mainView" class="layout hidden">
+    <aside class="sidebar">
+        <div class="brand"><span class="brand-logo">🏠</span> NexHome 联枢</div>
+        <nav>
+            <a class="nav-item active" data-page="dashboard">📊 总览</a>
+            <a class="nav-item" data-page="home">🧭 网站导航</a>
+            <a class="nav-item" data-page="ddns">🌐 DDNS 同步</a>
+            <a class="nav-item" data-page="stun">🔓 STUN 穿透</a>
+            <a class="nav-item" data-page="monitor">📡 可用性监控</a>
+            <a class="nav-item" data-page="notify">🔔 通知中心</a>
+            <a class="nav-item" data-page="wol">⚡ WOL 唤醒</a>
+            <a class="nav-item" data-page="cert">🔐 SSL 证书</a>
+            <a class="nav-item" data-page="proxy">🔀 代理中心</a>
+            <a class="nav-item" data-page="docker">🐳 Docker 容器</a>
+            <a class="nav-item" data-page="logs">📋 操作日志</a>
+            <a class="nav-item" data-page="diag">🩺 内存诊断</a>
+            <a class="nav-item" data-page="settings">⚙️ 系统设置</a>
+        </nav>
+        <div class="sidebar-foot">
+            <span id="sysInfo" class="muted small"></span>
+        </div>
+    </aside>
+    <main class="content">
+        <header class="topbar">
+            <h2 id="pageTitle">总览</h2>
+            <!-- 顶栏系统资源监控（CPU / 内存 / 虚拟内存），由 app.js 每 5 秒刷新 -->
+            <div id="sysMetrics" class="sys-metrics"></div>
+            <div class="topbar-actions">
+                <!-- 使用文档随系统打包部署（web/docs.html），相对路径以兼容安全入口前缀模式 -->
+                <a class="btn small" id="btnDocs" href="docs.html" target="_blank" rel="noopener">📖 使用文档</a>
+                <button class="btn ghost small" id="btnLogout">退出登录</button>
+            </div>
+        </header>
+        <section id="pageBody" class="page-body"></section>
+    </main>
+</div>
+
+<!-- 通用模态框 -->
+<div id="modalMask" class="modal-mask hidden">
+    <div class="modal" id="modalBox">
+        <div class="modal-head"><span id="modalTitle"></span><span class="modal-close" id="modalClose">✕</span></div>
+        <div id="modalBody" class="modal-body"></div>
+    </div>
+</div>
+
+<!-- 全局确认弹窗（替代原生 confirm，由 app.js 的 confirmBox() 驱动） -->
+<div id="confirmMask" class="confirm-mask hidden">
+    <div class="confirm-box" role="dialog" aria-modal="true">
+        <div class="confirm-icon" id="confirmIcon">❔</div>
+        <div class="confirm-title" id="confirmTitle">操作确认</div>
+        <div class="confirm-msg" id="confirmMsg"></div>
+        <div class="confirm-actions">
+            <button type="button" class="btn" id="confirmCancel">取消</button>
+            <button type="button" class="btn primary" id="confirmOk">确定</button>
+        </div>
+    </div>
+</div>
+
+<!-- 轻提示 -->
+<div id="toast" class="toast hidden"></div>
+
+<!-- 各菜单模块脚本，须先于 app.js 加载 -->
+<script src="js/dashboard.js"></script>
+<script src="js/home.js"></script>
+<script src="js/ddns.js"></script>
+<script src="js/stun.js"></script>
+<script src="js/monitor.js"></script>
+<script src="js/notify.js"></script>
+<script src="js/wol.js"></script>
+<script src="js/cert.js"></script>
+<script src="js/proxy.js"></script>
+<script src="js/docker.js"></script>
+<script src="js/logs.js"></script>
+<script src="js/diag.js"></script>
+<script src="js/settings.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

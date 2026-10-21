@@ -1,0 +1,12 @@
+# 构建产物
+/build/
+
+# 运行期数据目录（决策⑤：容器内落 /app/data；本地为运行时状态，不入库）
+/data/
+
+# JetBrains IDE
+/.idea/
+
+# 迁移分析阶段的临时笔记
+/.datadir.txt
+/.routes.txt
