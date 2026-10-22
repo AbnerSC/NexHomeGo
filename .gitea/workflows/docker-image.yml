@@ -47,7 +47,7 @@ env:
   IMAGE_NAME: nexhome-go
   # 自托管 runner 多在国内，注入 goproxy.cn 模块代理加速依赖下载（置空可关闭）
   # 若 Nexus 建有 go 模块代理仓库（如 repository/go-group），改为对应地址即可
-  GOPROXY_URL: https://repo.pi.mmxx.fun/repository/go-public
+  GOPROXY_URL: https://repo.pi.mmxx.fun/repository/go-public,direct
   # buildkit（docker-container driver）拉取镜像不走 docker daemon 的 registry-mirrors，
   # 基础镜像需显式经 Nexus 的 docker 代理仓库拉取，避免 runner 直连 docker.io 超时
   DOCKER_PROXY: repo.pi.mmxx.fun/docker-public

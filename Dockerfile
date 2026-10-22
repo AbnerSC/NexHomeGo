@@ -22,11 +22,12 @@
 ARG GO_IMAGE=golang:1.27-bookworm
 # 运行时基础镜像：必须声明在第一个 FROM 之前（全局 ARG），否则后续 FROM 无法引用
 ARG BASE_IMAGE=debian:bookworm-slim
+ARG APT_MIRROR=repo.huaweicloud.com
 FROM ${GO_IMAGE} AS build
 WORKDIR /build
 
 # 可选：注入模块代理（国内环境加速 go mod download；关闭 Gitea Actions 里可置空回退默认）
-ARG GOPROXY=https://proxy.golang.org,direct
+ARG GOPROXY=https://repo.pi.mmxx.fun/repository/go-public,direct
 # GOFLAGS=-buildvcs=false：构建上下文已排除 .git，禁止 go 尝试嵌入 VCS 戳记
 ENV GOPROXY=${GOPROXY} GOFLAGS=-buildvcs=false CGO_ENABLED=1
 
@@ -50,9 +51,17 @@ RUN LDFLAGS="-s -w"; \
 FROM ${BASE_IMAGE}
 WORKDIR /app
 
+ARG APT_MIRROR
+
 # 二进制按编译阶段的 glibc 动态链接（与运行镜像同源发行版系列），
 # 运行期仅需 CA 证书（ACME 签发/DDNS/通知等 HTTPS 出站）与时区数据（定时任务/日志时间）
-RUN apt-get update && \
+# 动态替换镜像源（兼容 DEB822 格式与旧版 sources.list 格式）
+RUN if [ -n "${APT_MIRROR}" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+        sed -i "s|security.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list 2>/dev/null || true; \
+    fi && \
+    apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates tzdata && \
     rm -rf /var/lib/apt/lists/*
 
