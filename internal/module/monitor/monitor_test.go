@@ -29,8 +29,8 @@ func TestSplitHostPort(t *testing.T) {
 		{"no-colon", nil},
 		{"host:", nil},
 		{":80", nil},
-		{"[::1]:", nil},   // 端口为空，Java 同判非法
-		{"[::1", nil},     // 缺右括号
+		{"[::1]:", nil}, // 端口为空，Java 同判非法
+		{"[::1", nil},   // 缺右括号
 	}
 	for _, c := range cases {
 		got := splitHostPort(c.target)
@@ -116,7 +116,7 @@ func TestValidate(t *testing.T) {
 	if err := validate(b(map[string]interface{}{"name": "n", "type": "HTTP", "target": "https://x.com", "timeout_sec": float64(0)})); err == nil {
 		t.Error("超时非正应校验失败")
 	}
-	// UDP 表单层面继续兼容（探测执行才降级），与 Java 前端零改动
+	// UDP 表单层面通过校验（真实探测在执行期进行），与 Java 前端零改动
 	if err := validate(b(map[string]interface{}{"name": "n", "type": "UDP", "target": "[::1]:53"})); err != nil {
 		t.Errorf("UDP 表单应通过校验: %v", err)
 	}
@@ -218,8 +218,8 @@ func TestProbeTCPTransientRetry(t *testing.T) {
 	setupTestDB(t)
 
 	var (
-		evMu   sync.Mutex
-		events []string
+		evMu    sync.Mutex
+		events  []string
 		details []string
 	)
 	NotifyBroadcast = func(event, title, message string) {
@@ -255,19 +255,36 @@ func TestProbeTCPTransientRetry(t *testing.T) {
 	}
 }
 
-func TestProbeUDPDowngrade(t *testing.T) {
+func TestProbeUDPBestEffortUp(t *testing.T) {
 	setupTestDB(t)
+	// 起一个回显 UDP 服务：收到任何报文即原样回一包，验证尽力型探测「收到回包=可用」路径。
+	pc, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatalf("ListenUDP: %v", err)
+	}
+	defer pc.Close()
+	go func() {
+		buf := make([]byte, 512)
+		for {
+			n, addr, rerr := pc.ReadFromUDP(buf)
+			if rerr != nil {
+				return
+			}
+			_, _ = pc.WriteToUDP(buf[:n], addr)
+		}
+	}()
+	target := pc.LocalAddr().String() // 127.0.0.1:<随机端口>，非 53 走尽力型分支
 	id, err := core.Insert(`INSERT INTO monitor_task(name, type, target, interval_sec, timeout_sec, fail_threshold, enabled)
-		VALUES('UDP降级','UDP','127.0.0.1:53',15,3,1,1)`)
+		VALUES('UDP回显','UDP',?,15,3,1,1)`, target)
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
 	up, detail, err := doProbe(mustGetRowForTest(t, id), 3)
 	if err != nil {
-		t.Fatalf("UDP 降级不应报错: %v", err)
+		t.Fatalf("UDP 探测不应报错: %v", err)
 	}
-	if up || !strings.Contains(detail, "暂未支持") {
-		t.Errorf("UDP 应明确降级为不可用+暂未支持详情，实际: up=%v detail=%q", up, detail)
+	if !up || !strings.Contains(detail, "收到回包") {
+		t.Errorf("收到回包应判可用，实际: up=%v detail=%q", up, detail)
 	}
 }
 

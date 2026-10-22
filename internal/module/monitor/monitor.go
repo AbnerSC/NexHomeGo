@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,8 +19,8 @@ import (
 )
 
 // 服务/端口可用性监控。
-// 复刻 Java MonitorService：HTTP/HTTPS（URL 状态码 + 关键字判定）、TCP（连接可达）两类探测；
-// UDP（依赖 ICMP 差错与 DNS 报文）按既定决策后续评估，任务可正常保存，探测给出明确的「暂未支持」详情。
+// 复刻 Java MonitorService：HTTP/HTTPS（URL 状态码 + 关键字判定）、TCP（连接可达）、UDP（尽力探测）三类探测。
+// UDP 中 53 端口按标准 DNS 查询探测（有应答才判可用），其余端口收不到回包且未收到 ICMP 端口不可达差错时按可达处理。
 // 探测按任务间隔周期调度，每个任务独立 goroutine（等价 Java 的虚拟线程池提交），绝不占用 core 调度池
 // （慢速网络 IO 会饥饿 DDNS 同步 / 证书续期等关键周期任务，遵循既有线程隔离规范）。
 //
@@ -52,12 +53,17 @@ func broadcast(event, title, message string) {
 const (
 	// 探测固定用 HTTP/1.1：Go 默认 Transport 会为 https 协商 HTTP/2，且明文 h2c 升级头
 	// 让路由器/NAS 这类嵌入式 Web 服务常处理不了而直接挂起，表现为偶发连接超时（与 Java 注释同源问题）。
-	probeAttempts        = 3    // 单个周期内的探测尝试次数：吸收一次链路抖动，不至于一抖就告警
-	retryGapMs           = 800  // 两次尝试之间的间隔（毫秒）
-	minAttemptTimeoutSec = 3    // 单次尝试的最小超时（秒）：低于此值的配置对 HTTPS/overlay 链路不现实
-	recoverConfirmMin    = 2    // DOWN→UP 恢复至少需连续成功的周期数（与 fail_threshold 取较大值）
-	probeFirstDelaySec   = 3    // 任务启用/编辑后的首个探测延迟基准（秒），叠加按 ID 的错峰偏移
+	probeAttempts        = 3        // 单个周期内的探测尝试次数：吸收一次链路抖动，不至于一抖就告警
+	retryGapMs           = 800      // 两次尝试之间的间隔（毫秒）
+	minAttemptTimeoutSec = 3        // 单次尝试的最小超时（秒）：低于此值的配置对 HTTPS/overlay 链路不现实
+	recoverConfirmMin    = 2        // DOWN→UP 恢复至少需连续成功的周期数（与 fail_threshold 取较大值）
+	probeFirstDelaySec   = 3        // 任务启用/编辑后的首个探测延迟基准（秒），叠加按 ID 的错峰偏移
 	maxProbeBodyBytes    = 10 << 20 // 关键字判定读取的响应体上限（10MB，防御性截断）
+
+	// dnsProbeName DNS（UDP 53）探测用的查询域名：任意 A 记录查询能拿到应答即证明解析服务存活。
+	dnsProbeName = "example.com"
+	// udpICMPGraceMs 尽力型 UDP 探测：首包无回包后，补发一包给 ICMP 端口不可达差错留的短等待窗口（毫秒）。
+	udpICMPGraceMs = 500
 )
 
 var (
@@ -71,8 +77,8 @@ var (
 	}
 
 	mu        sync.Mutex
-	probing   = map[int64]bool{}              // 防重入：同一任务同一时刻只有一个探测周期
-	streaks   = map[int64]int{}               // 本故障周期的连续成功计数（内存态，重启归零，仅用于 DOWN→UP 恢复确认）
+	probing   = map[int64]bool{}               // 防重入：同一任务同一时刻只有一个探测周期
+	streaks   = map[int64]int{}                // 本故障周期的连续成功计数（内存态，重启归零，仅用于 DOWN→UP 恢复确认）
 	schedules = map[int64]context.CancelFunc{} // 各任务的调度 goroutine 取消句柄
 )
 
@@ -192,7 +198,7 @@ func remove(c *web.Ctx) error {
 	return nil
 }
 
-// validate 表单校验（类型清单保留 UDP，与 Java 前端兼容；探测执行暂降级为「暂未支持」）。
+// validate 表单校验（HTTP/HTTPS/TCP/UDP 四类均支持，目标格式按类型分别校验，与 Java MonitorService 一致）。
 func validate(b map[string]interface{}) error {
 	if strings.TrimSpace(core.BodyStr(b, "name")) == "" {
 		return core.NewBadRequest("任务名称不能为空")
@@ -384,8 +390,7 @@ func doProbe(task *core.Row, timeout int) (bool, string, error) {
 	case "TCP":
 		return probeTCP(task, timeout)
 	case "UDP":
-		// 尽力型 UDP 探测依赖 ICMP 端口不可达差错，按既定决策后续评估（任务保存/调度不受影响）
-		return false, "UDP 探测暂未支持（依赖 ICMP 差错报文，后续版本评估）", nil
+		return probeUDP(task, timeout)
 	default:
 		return false, "", errors.New("未知探测类型: " + rowStr(task, "type"))
 	}
@@ -465,6 +470,130 @@ func probeTCP(task *core.Row, timeout int) (bool, string, error) {
 	}
 	_ = conn.Close()
 	return true, "TCP 连接成功", nil
+}
+
+// probeUDP 入口：DNS（53 端口）走标准查询，其余端口走尽力型探测（与 Java probeUdp 一致）。
+func probeUDP(task *core.Row, timeout int) (bool, string, error) {
+	hp := hostPort(task)
+	if hp == nil {
+		return false, "", errors.New("探测目标需为 host:port 格式: " + rowStr(task, "target"))
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(hp[1]))
+	if err != nil {
+		return false, "", errors.New("UDP 探测端口非法: " + hp[1])
+	}
+	// DNS 服务器对无关随机报文根本不回包，必须发标准查询，否则永远判故障
+	if port == 53 {
+		return probeDNS(hp[0], timeout)
+	}
+	return probeUDPBestEffort(hp[0], port, timeout)
+}
+
+// probeDNS 发送标准 A 记录查询，收到 ID 匹配且 QR=1 的应答即判可用（NXDOMAIN 等错误码同样
+// 证明解析服务存活）；DNS 是有应答服务，超时无应答抛可重试错误，交由周期内重试吸收上游递归的偶发慢应答。
+func probeDNS(host string, timeout int) (bool, string, error) {
+	query := dnsQuery(dnsProbeName, rand.Intn(0x10000))
+	conn, err := net.Dial("udp", net.JoinHostPort(host, "53"))
+	if err != nil {
+		// 地址解析失败/不可达：属瞬时故障，可重试
+		return false, "", transientErr{msg: "DNS 连接失败: " + err.Error()}
+	}
+	defer conn.Close()
+	_ = conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
+	if _, err = conn.Write(query); err != nil {
+		return false, "", transientErr{msg: "DNS 查询发送失败: " + err.Error()}
+	}
+	buf := make([]byte, 1024)
+	n, err := conn.Read(buf)
+	if err != nil {
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			return false, "", transientErr{msg: "DNS 查询 " + dnsProbeName + " 超时无应答"}
+		}
+		return false, "", transientErr{msg: "DNS 查询失败: " + err.Error()}
+	}
+	// 校验：至少头部 12 字节、QR=1（buf[2] 高位）、应答 ID 与查询一致
+	if n < 12 || buf[2]&0x80 == 0 || buf[0] != query[0] || buf[1] != query[1] {
+		return false, "", transientErr{msg: "DNS 应答报文非法（" + strconv.Itoa(n) + " 字节）"}
+	}
+	rcode := int(buf[3] & 0x0F)
+	answers := (int(buf[6]&0xFF) << 8) | int(buf[7]&0xFF)
+	return true, "DNS 应答 " + rcodeName(rcode) + "，" + strconv.Itoa(answers) + " 条记录", nil
+}
+
+// probeUDPBestEffort 尽力型 UDP 探测：UDP 无连接，多数服务不会对未知报文回包，因此
+// 「收到回包」与「无回包但未收到端口不可达差错」均判可达，仅端口明确不可达时判故障。
+// Go 里 connected UDP socket 收到 ICMP 差错后 Read 会报非超时错误（Linux ECONNREFUSED /
+// Windows WSAECONNRESET），超时则说无回包——以此替代 Java 的 PortUnreachableException 判定。
+func probeUDPBestEffort(host string, port, timeout int) (bool, string, error) {
+	payload := []byte("NEXHOME-UDP-PING\n")
+	conn, err := net.Dial("udp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		// 目标地址解析失败：属瞬时故障，可重试（与 Java getByName 抛 UnknownHostException 同源）
+		return false, "", transientErr{msg: "UDP 连接失败: " + err.Error()}
+	}
+	defer conn.Close()
+	reply := make([]byte, 256)
+	for round := 0; round < 2; round++ {
+		if _, err = conn.Write(payload); err != nil {
+			return false, "", transientErr{msg: "UDP 发送失败: " + err.Error()}
+		}
+		wait := time.Duration(timeout) * time.Second
+		if round == 1 {
+			wait = time.Duration(udpICMPGraceMs) * time.Millisecond // 补发包短等，给首包可能延迟到达的 ICMP 差错一次机会
+		}
+		_ = conn.SetDeadline(time.Now().Add(wait))
+		n, err := conn.Read(reply)
+		if err == nil {
+			return true, "UDP 收到回包 " + strconv.Itoa(n) + " 字节", nil
+		}
+		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			continue // 无回包：round 0 补发一轮；round 1 仍无回包则按可达处理
+		}
+		// 非超时错误：connected socket 上即 ICMP 端口不可达差错（Windows 上表现为
+		// 上一轮 Write 或本轮 Read 报 connection refused/reset），明确判故障，不重试。
+		return false, "UDP 端口不可达（ICMP port unreachable）", nil
+	}
+	return true, "UDP 无回包且未收到端口不可达差错，按可达处理", nil
+}
+
+// dnsQuery 拼装标准 DNS 查询报文：1 条 A 记录问题，无选项（与 Java dnsQuery 逐字节一致）。
+func dnsQuery(name string, id int) []byte {
+	out := make([]byte, 0, 64)
+	out = append(out, byte(id>>8), byte(id), 0x01, 0x00, // flags: 期望递归
+		0x00, 0x01, // QDCOUNT = 1
+		0x00, 0x00, // ANCOUNT
+		0x00, 0x00, // NSCOUNT
+		0x00, 0x00) // ARCOUNT
+	for _, label := range strings.Split(name, ".") {
+		lb := []byte(label)
+		if len(lb) == 0 || len(lb) > 63 {
+			continue
+		}
+		out = append(out, byte(len(lb)))
+		out = append(out, lb...)
+	}
+	out = append(out, 0, // 根标签
+		0x00, 0x01, // QTYPE = A
+		0x00, 0x01) // QCLASS = IN
+	return out
+}
+
+func rcodeName(rcode int) string {
+	switch rcode {
+	case 0:
+		return "NOERROR"
+	case 1:
+		return "FORMERR"
+	case 2:
+		return "SERVFAIL"
+	case 3:
+		return "NXDOMAIN"
+	case 4:
+		return "NOTIMP"
+	case 5:
+		return "REFUSED"
+	}
+	return "RCODE" + strconv.Itoa(rcode)
 }
 
 // ---------- 告警通知 ----------
