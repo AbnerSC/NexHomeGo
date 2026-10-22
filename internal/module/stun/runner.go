@@ -24,8 +24,13 @@ package stun
 // 运营商 CGNAT 层的映射端口不受 UPnP 控制，因此 WAN 非公网时绝不用 UPnP 外部端口拼装展示地址。
 //
 // 可用性自测：验证「映射保活存活」而非回环连通，并按 NAT 类型给出入站可达性结论。
-// TCP 自测另验「公网入站可达」：优先本机直连穿透出的公网 IP:端口（hairpin 回流），
+// TCP 自测首选「服务内直连穿透出的公网 IP:端口」（hairpin 回流）：成功即入站真实可达，
+// 直接判 OK 并跳过出站保活链路判定（出站被阻断时也不触发重建/弹跳）；
 // 直连失败退回第三方探测节点真实连接映射地址验证（手动自测必验）。
+// 重建窗口内不以内部链路状态判失效：近期真实外网访问或回流可达即判可用，
+// 且重建收尾后自动复验一次，避免可用通道长期停在「重建中」。
+// 真实外网访问即一次成功自测：收到后直接刷新 check_time/check_result（计为 OK，
+// 按自测周期节流），自测时间随访问滚动前进，不必等下个巡检周期。
 //
 // 周期巡检：仅按保活健康度触发重建，不因回环自测超时反复重新穿透丢弃可用映射；
 // TCP 映射缺失时退避重试出站探测。
@@ -58,6 +63,10 @@ import (
 // 新建出站连接（连接存活期间不消耗）。端点若为短空闲超时类型会周期性死亡轮换，
 // 60 个可支撑较长时间才需弹跳一次。
 const tcpSpares = 60
+
+// rebuildBackoffSec 出站链路重建失败后的退避秒数：STUN 与公共出站端点均不可达属
+// 网络侧阻断，每保活周期（10s）反复探测与弹跳（关闭监听重组）只会无谓打断入站
+const rebuildBackoffSec = 60
 
 // WAN 腿 socket 显式发送/接收缓冲（字节）：CGNAT/移动宽带链路 RTT 高（实测可达 200ms），
 // 内核自动扩窗在短连接上来不及涨到线速所需的带宽时延积（BDP=带宽×RTT，50Mbps×200ms≈1.25MB）。
@@ -173,6 +182,17 @@ type runner struct {
 	lastExtCheckAt     atomic.Int64
 	lastExtReachable   atomic.Int64 // -1=未判定 0=不可达 1=可达
 	extCheckRunning    atomic.Bool
+	// verifyMu 自测串行锁：手动自测、周期巡检与重建后复验共用同一把锁，
+	// 避免并发自测互相覆盖结论（后写覆盖先写会让前端结论随机跳变）
+	verifyMu sync.Mutex
+	// tcpRetryAt 出站链路重建失败后的下次重试时间（ms）：退避期内保活周期不再探测/弹跳，
+	// 监听保持不中断（入站实际仍在承载流量）
+	tcpRetryAt atomic.Int64
+	// rebuildWarned 出站链路重建失败已告警：同一故障只告警一次，重建成功后复位
+	rebuildWarned atomic.Bool
+	// lastPeerVerifiedAt 最近一次因真实外网访问而刷新自测的时间（ms）：按自测周期节流，
+	// 避免高频访问持续写库
+	lastPeerVerifiedAt atomic.Int64
 
 	upnpGateway *gateway
 	upnpMapped  bool
@@ -286,11 +306,16 @@ func (r *runner) start() error {
 	return nil
 }
 
-// verifyQuietly 静默执行一次可用性自测（结果仅记录，异常不打断调度）
+// verifyQuietly 静默执行一次可用性自测（结果仅记录，异常不打断调度）。
+// 已有自测在途时直接跳过：自测含链路交互与等待，重复执行既无意义又会互相覆盖结论。
 func (r *runner) verifyQuietly() {
 	if !r.running.Load() {
 		return
 	}
+	if !r.verifyMu.TryLock() {
+		return
+	}
+	defer r.verifyMu.Unlock()
 	if _, err := r.verifyChannel(false); err != nil {
 		core.LogWarn(core.LogStun, "任务["+r.name+"] 可用性自测异常: "+err.Error())
 	}
@@ -741,17 +766,46 @@ func (r *runner) refreshTcpLink() {
 		// 链路交互存活即映射存活：同步就绪标志。标志与真实链路不一致时自检会误报
 		// 「TCP映射未建立」，而实际外网端口仍可正常访问。
 		r.wanTcpReady.Store(true)
+		r.cleanRebuildBackoff()
 		return // 长连接交互保活成功：监听不中断、映射端口不漂移
+	}
+	// 出站重建失败后的退避窗口：链路/端点整体不可达属网络侧问题，退避期内只保留监听，
+	// 反复探测与弹跳（关闭监听重组）只会无谓打断入站
+	if until := r.tcpRetryAt.Load(); until > 0 && time.Now().UnixMilli() < until {
+		return
 	}
 	// 链路死亡（服务器断开/网络切换）：优先消耗备用配额重连（零监听中断）
 	port := r.tcpServer.Addr().(*net.TCPAddr).Port
 	r.punch.noteLinkDownIfNeeded()
 	r.punch.closeLink()
 	if r.punch.reconnect(port, r.punch.allowStunNow()) != nil {
+		r.cleanRebuildBackoff()
+		return
+	}
+	// 近期仍有真实外网访问：通道确凿可用，弹跳重建（关闭监听）无收益，
+	// 保留监听继续承载并退避重试出站探测
+	if evidence := r.recentPeerInboundDesc(); evidence != "" {
+		r.deferRebuild("TCP出站链路重建失败(STUN与公共出站端点均不可达)，但" + evidence + "，保留监听继续承载")
 		return
 	}
 	// 备用耗尽：弹跳重建（异步提交，避免逐候选探测长时间占用共享调度池）
 	r.bounceRebuild(port)
+}
+
+// cleanRebuildBackoff 出站链路恢复正常：复位失败告警与重试退避
+func (r *runner) cleanRebuildBackoff() {
+	r.rebuildWarned.Store(false)
+	r.tcpRetryAt.Store(0)
+}
+
+// deferRebuild 出站链路整体不可达：进入退避重试窗口（≈60s），同一故障只告警一次。
+// 退避期内保活周期不再反复探测/弹跳，监听保持不中断（入站往往仍在正常承载流量）。
+func (r *runner) deferRebuild(msg string) {
+	if !r.rebuildWarned.Swap(true) {
+		core.LogWarn(core.LogStun, "任务["+r.name+"] "+msg+"，"+
+			strconv.Itoa(rebuildBackoffSec)+"s 后重试出站探测")
+	}
+	r.tcpRetryAt.Store(time.Now().UnixMilli() + rebuildBackoffSec*1000)
 }
 
 // bounceRebuild 弹跳重建（异步串行队列执行）：关闭监听释放本地端口后，在端口空闲的窗口内
@@ -767,6 +821,12 @@ func (r *runner) bounceRebuild(port int) {
 				r.reopenListener(port) // 异常路径兜底：尽力恢复监听，避免重建失败后监听永久丢失
 			}
 			r.tcpRefreshing.Store(false)
+			// 重建收尾后自动复验，兑现「完成后自动复验」语义：巡检下个周期（≥60s）才复验，
+			// 在此之前前端会一直停在「重建中」，而通道往往已随配额重连恢复可用。
+			// 延迟 1 秒让监听重开与链路登记先完成，避免自测撞在收尾窗口内
+			if r.running.Load() {
+				core.Delay(1, r.verifyQuietly)
+			}
 		}()
 		if !r.running.Load() {
 			return
@@ -794,8 +854,9 @@ func (r *runner) bounceRebuild(port int) {
 		}
 		if r.punch.reconnectAll(port, r.punch.allowStunNow()) == nil {
 			r.wanTcpReady.Store(false)
-			core.LogWarn(core.LogStun, "任务["+r.name+"] TCP出站链路重建失败(STUN与公共出站端点均不可达)，"+
-				"TCP映射暂缺，巡检将退避重试；UDP映射照常保活")
+			r.deferRebuild("TCP出站链路重建失败(STUN与公共出站端点均不可达)，TCP映射暂缺；UDP映射照常保活")
+		} else {
+			r.cleanRebuildBackoff()
 		}
 	})
 }
@@ -869,7 +930,6 @@ func (r *runner) pipeToTarget(client *net.TCPConn) {
 	if !ok {
 		return
 	}
-	core.LogInfo(core.LogStun, "任务["+r.name+"] 外网连接: "+client.RemoteAddr().String())
 	// WAN 腿调优：关 Nagle（小请求不积包、不掉一个 RTT 的停顿）+ 显式大收发缓冲（单流更快填满 BDP）。
 	// 这是与 Lucky 单隧道相比每连接冷启动最直接的缓解点；对多流并发超发导致的衰减只能部分改善。
 	tuneWanSocket(client)
@@ -877,12 +937,18 @@ func (r *runner) pipeToTarget(client *net.TCPConn) {
 	// 对端不是自测回环连接时记录真实外网访问时刻：作为通道实际在用的证据，
 	// 自测未通过时据此避免误重穿把可用映射丢弃。自测回环判定：本机直连公网映射的
 	// 探测窗口内（源经回流改写，LAN IP/路由器 IP/公网出口 IP 均有可能），
-	// 或源地址即当前映射出口 IP（旧路径兜底）
+	// 或源地址即当前映射出口 IP（旧路径兜底）。回环连接不计证据也不打「外网连接」日志
 	selfProbe := time.Now().UnixMilli() < r.selfProbeUntil.Load()
 	mappedIp := r.currentMappedIp()
 	peerIp := client.RemoteAddr().(*net.TCPAddr).IP.String()
 	if !selfProbe && (mappedIp == "" || mappedIp != peerIp) {
-		r.lastPeerInbound.Store(time.Now().UnixMilli())
+		now := time.Now().UnixMilli()
+		r.lastPeerInbound.Store(now)
+		msg := "任务[" + r.name + "] 外网连接: " + client.RemoteAddr().String()
+		if r.markPeerVerified(now) {
+			msg += "（入站可达，计为一次成功自测）"
+		}
+		core.LogInfo(core.LogStun, msg)
 	}
 	done := make(chan struct{})
 	go func() {
@@ -1252,8 +1318,11 @@ func (r *runner) stopTasks() {
 
 // ---------- 可用性自测 ----------
 
-// verifyNow 手动自测入口（REST 接口调用，同步执行并返回结果；必做公网入站验证，耗时数秒）
+// verifyNow 手动自测入口（REST 接口调用，同步执行并返回结果；必做公网入站验证，耗时数秒）。
+// 与周期自测串行：等待在途自测结束，保证返回的结论完整且不会被后续写入覆盖。
 func (r *runner) verifyNow() (*core.Row, error) {
+	r.verifyMu.Lock()
+	defer r.verifyMu.Unlock()
 	return r.verifyChannel(true)
 }
 
@@ -1284,17 +1353,30 @@ func (r *runner) verifyChannel(manual bool) (*core.Row, error) {
 		mapped = strField(row, "mapped_addr")
 	}
 	var result string
+	// localInbound 服务内直连穿透出的公网映射地址（hairpin 回流）探测结论：
+	// -1=未探测（UDP 任务） 0=失败 1=成功。一轮自测只拨号一次，后续入站仲裁复用结论，
+	// 避免重复拨号等满超时
+	localInbound := -1
 	if mapped == "" {
 		result = "FAIL(无外网映射地址)"
 	} else if r.isUdp() {
 		result = r.verifyUdpKeepalive()
+	} else if r.probeLocalInbound(mapped) {
+		// 首选判定：服务内直连穿透出的公网 IP:端口成功，说明入站真实可达——这是通道可用的
+		// 充分证据（本机/局域网访问从未中断）。直接判 OK 并跳过出站保活链路判定：
+		// 出站被网络阻断（STUN 与公共端点均不可达）时不再触发无谓的链路重建与监听弹跳
+		localInbound = 1
+		r.noteExtVerdict("OK", true)
+		r.wanTcpReady.Store(true) // 入站可达即映射有效：同步纠正就绪状态
+		result = "OK(服务内直连映射地址可达，入站可用)"
 	} else {
+		localInbound = 0
 		result = r.verifyTcpKeepalive(manual)
 	}
 	// 公网入站真实验证：补上「保活存活 ≠ 外网可主动连入」盲区，同时也是保活判定失败时的仲裁——
 	// 链路状态标志滞后、刚完成重建或旧链路尚未被上游回收时，映射实际仍可从外网连入，
 	// 仅凭内部保活状态就把可用通道判成 FAIL，会与「实测端口可访问」直接矛盾。
-	if !r.isUdp() && mapped != "" {
+	if !r.isUdp() && mapped != "" && localInbound != 1 {
 		// TCP 自测过程中链路可能已重建并刷新映射地址：公网入站验证以最新登记地址为准，
 		// 否则验证的还是自测前的旧地址，结果不代表当前通道
 		rowNow, qerr := core.QueryOne("SELECT mapped_addr FROM stun_task WHERE id=?", r.id)
@@ -1304,21 +1386,41 @@ func (r *runner) verifyChannel(manual bool) (*core.Row, error) {
 			}
 		}
 		if strings.HasPrefix(result, "OK") {
-			if v := r.inboundVerdict(mapped, manual); v != "" {
+			if v := r.inboundVerdict(mapped, manual, localInbound); v != "" {
 				if v == "OK" {
 					result += "，公网入站验证可达"
 				} else {
 					result += "，公网入站验证不可达" + v[4:]
 				}
 			}
-		} else if strings.HasPrefix(result, "FAIL") && r.inboundVerdict(mapped, manual) == "OK" {
-			// 保活/链路状态自检失败但外网真实可连入：以可达为准（链路状态滞后或刚重建完成，
-			// 映射并未失效），仅记日志提示内部链路需修复，保活调度会持续纠正
+		} else if strings.HasPrefix(result, "重建中") {
+			// 重建窗口内链路/监听状态不能作为失效依据（监听多为亚秒级重开，配额重连也不中断入站）。
+			// 用「通道实际在用」的客观证据仲裁：近期有真实外网访问或映射地址本机回流可连入，
+			// 即证明映射有效、通道可用——不能把可用通道长期标成「重建中」
+			if evidence := r.recentPeerInboundDesc(); evidence != "" {
+				r.wanTcpReady.Store(true) // 外网能连入即映射有效：同步纠正就绪状态
+				result = "OK(自测时链路重建中，但" + evidence + "，通道可用)"
+			} else if r.inboundVerdict(mapped, manual, localInbound) == "OK" {
+				r.wanTcpReady.Store(true)
+				result = "OK(自测时链路重建中，但公网入站验证可达)"
+			}
+		} else if strings.HasPrefix(result, "FAIL") {
+			// 保活/链路状态自检失败并不等于通道不可用：链路状态标志可能滞后、刚完成重建或旧链路
+			// 尚未被上游回收。先看「真实外网访问」证据（最权威，不依赖本机回流），再看公网入站验证。
+			// 典型场景：STUN 与公共出站端点整体被阻断（出站探测全失败）但入站监听仍正常承载流量
 			reason := strings.TrimSuffix(strings.TrimPrefix(result, "FAIL("), ")")
-			r.wanTcpReady.Store(true) // 入站可达即映射有效：同步纠正就绪状态
-			core.LogWarn(core.LogStun, "任务["+r.name+"] 保活链路自检异常("+reason+
-				")但公网入站验证可达，自测按可用判定；保活调度将持续修复链路状态")
-			result = "OK(保活自检异常[" + reason + "]，公网入站验证可达)"
+			if evidence := r.recentPeerInboundDesc(); evidence != "" {
+				r.wanTcpReady.Store(true) // 外网能连入即映射有效：同步纠正就绪状态
+				core.LogWarn(core.LogStun, "任务["+r.name+"] 保活链路自检异常("+reason+")但"+evidence+
+					"，自测按可用判定；出站重建退避重试，不影响入站承载")
+				result = "OK(保活自检异常[" + reason + "]，但" + evidence + "，通道可用)"
+			} else if r.inboundVerdict(mapped, manual, localInbound) == "OK" {
+				// 外网真实可连入：以可达为准（链路状态滞后或刚重建完成，映射并未失效）
+				r.wanTcpReady.Store(true) // 入站可达即映射有效：同步纠正就绪状态
+				core.LogWarn(core.LogStun, "任务["+r.name+"] 保活链路自检异常("+reason+
+					")但公网入站验证可达，自测按可用判定；保活调度将持续修复链路状态")
+				result = "OK(保活自检异常[" + reason + "]，公网入站验证可达)"
+			}
 		}
 	}
 	timeStr := core.Now()
@@ -1338,6 +1440,53 @@ func (r *runner) verifyChannel(manual bool) (*core.Row, error) {
 	out.Set("result", shown)
 	out.Set("detail", result)
 	return out, nil
+}
+
+// markPeerVerified 真实外网访问即一次成功自测：直接刷新 check_time/check_result，
+// 不必等下一个巡检周期（前端每 5 秒拉取任务列表，自测时间会随之滚动前进）。
+// 已知真实访问是「映射有效、通道在用」最权威的证据，比出站保活链路状态更可靠。
+// 节流：同一自测周期内只刷一次，避免高频访问持续写库；自测在途时让位（不抢最新结论），
+// 下次访问再刷。返回是否实际刷新。
+func (r *runner) markPeerVerified(now int64) bool {
+	if !r.verifyMu.TryLock() {
+		return false
+	}
+	defer r.verifyMu.Unlock()
+	window := int64(r.keepaliveSec) * 1000
+	if window < 5_000 {
+		window = 5_000 // 保活间隔异常（0）时仍保证最低节流窗口
+	}
+	prev := r.lastPeerVerifiedAt.Load()
+	if now-prev < window {
+		return false
+	}
+	if !r.lastPeerVerifiedAt.CompareAndSwap(prev, now) {
+		return false
+	}
+	if _, err := core.Update("UPDATE stun_task SET check_time=?, check_result=? WHERE id=?",
+		core.Now(), "OK", r.id); err != nil {
+		return false
+	}
+	return true
+}
+
+// recentPeerInboundDesc 近期真实外网访问证据（非自测回环）：有则返回描述文案，无则空串。
+// 阈值与巡检豁免一致（max(60s, keepaliveSec*6)）：真实对端数据到达是「映射有效、通道在用」
+// 最可靠的证据，比任何内部链路保活状态更权威。
+func (r *runner) recentPeerInboundDesc() string {
+	last := r.lastPeerInbound.Load()
+	if last <= 0 {
+		return ""
+	}
+	ago := time.Now().UnixMilli() - last
+	window := int64(r.keepaliveSec) * 6_000
+	if window < 60_000 {
+		window = 60_000
+	}
+	if ago < 0 || ago > window {
+		return ""
+	}
+	return strconv.FormatInt(ago/1000, 10) + "秒前仍有真实外网访问"
 }
 
 // verifyUdpKeepalive UDP 自测：向全部候选 STUN 服务器发绑定请求，接收线程在超时前收到响应
@@ -1363,11 +1512,22 @@ func (r *runner) verifyTcpKeepalive(manual bool) string {
 	if r.tcpRefreshing.Load() {
 		return "重建中(链路重建完成后自动复验)"
 	}
+	if r.upnpPublicWan.Load() {
+		// UPnP 公网直通：入站不依赖 STUN/TCP 出站长连接（启动时已按 skipProbe 跳过探测，
+		// punch 链路不存在），保活链路检测必然失败——以本地监听状态为准，入站由公网验证仲裁。
+		// 不加此分支会让每个自测周期都误报「重建中/链路无响应」
+		if r.tcpServer == nil || !r.tcpListening.Load() {
+			return "FAIL(本地TCP监听已关闭)"
+		}
+		return "OK(UPnP公网直通，本地监听正常，入站以公网验证为准)"
+	}
 	if !r.wanTcpReady.Load() {
 		// 就绪标志可能滞后于实际链路（重建成功但旧路径未回调、或链路在保活周期内已自行恢复）：
 		// 先按当前链路实际存活校正，避免「端口实测可访问却报映射未建立」
 		if r.punch.linkAliveNow() {
 			r.wanTcpReady.Store(true)
+		} else if until := r.tcpRetryAt.Load(); until > 0 && time.Now().UnixMilli() < until {
+			return "FAIL(TCP出站链路不可达，退避重试中)"
 		} else {
 			return "FAIL(TCP映射未建立，巡检自动重试)"
 		}
@@ -1389,7 +1549,11 @@ func (r *runner) verifyTcpKeepalive(manual bool) string {
 		return r.okTcp(time.Now().UnixMilli()-t0, true) // 快速路径（备用配额）重建成功
 	}
 	if !manual {
-		// 周期自测不等待弹跳：按重建中返回（前端黄色展示），下轮自测复验
+		// 周期自测不等待弹跳：重建已触发按「重建中」返回（前端黄色展示），下轮自测复验；
+		// 退避期内重建被跳过（出站整体不可达）时如实报 FAIL，避免长期停在「重建中」
+		if until := r.tcpRetryAt.Load(); until > 0 && time.Now().UnixMilli() < until {
+			return "FAIL(TCP出站链路不可达，退避重试中)"
+		}
 		return "重建中(已触发链路重建，完成后自动复验)"
 	}
 	deadline := time.Now().UnixMilli() + 60_000
@@ -1421,11 +1585,17 @@ func (r *runner) okTcp(costMs int64, rebuilt bool) string {
 
 // inboundVerdict 公网入站可达性判定（TCP 任务）：优先本机直连穿透出的公网 IP:端口（hairpin 回流，
 // 毫秒级且不依赖外部服务）；无回流网络退回第三方探测节点真实连接映射地址。
+// local 为调用方已完成的服务内直连探测结论（1=可达 0=失败 -1=未探测）：同一轮自测直接复用，
+// 避免重复拨号（失败需等满 4s 超时）。
 // 手动自测同步验证（HTTP 线程不受调度池影响）；周期自测限冷却且必须异步执行——
 // 第三方 API 响应可达数十秒，占用调度池会延迟保活致 CGNAT 映射超时，异步执行只留上次结论。
 // 返回 "OK" / "FAIL(原因)" / 空串（无法判定：第三方服务不可用或验证尚未完成，本轮不作结论）。
-func (r *runner) inboundVerdict(mapped string, manual bool) string {
-	if r.probeLocalInbound(mapped) {
+func (r *runner) inboundVerdict(mapped string, manual bool, local int) string {
+	if local == 1 {
+		r.noteExtVerdict("OK", true)
+		return "OK"
+	}
+	if local < 0 && r.probeLocalInbound(mapped) {
 		r.noteExtVerdict("OK", true)
 		return "OK"
 	}
@@ -1489,10 +1659,13 @@ func (r *runner) probeLocalInbound(mapped string) bool {
 	if ci <= 0 {
 		return false
 	}
+	prevUntil := r.selfProbeUntil.Load()
 	r.selfProbeUntil.Store(time.Now().UnixMilli() + 15_000)
 	conn, err := net.DialTimeout("tcp4", net.JoinHostPort(mapped[:ci], mapped[ci+1:]), 4*time.Second)
 	if err != nil {
-		return false // 无回流网络/映射暂不可达：交由调用方退回第三方节点验证
+		// 无回流网络/映射暂不可达：未产生回环连接，恢复原抑制窗口，避免漏记真实外网访问
+		r.selfProbeUntil.Store(prevUntil)
+		return false
 	}
 	_ = conn.Close()
 	return true
@@ -1728,11 +1901,19 @@ func (r *runner) watchChannel() {
 	}
 	if !r.isUdp() && !r.wanTcpReady.Load() {
 		// TCP 映射尚未建立（出站链路全端点不可达）：先重试建立，再走一次自测刷新界面结论——
-		// 提前 return 会让「可用性自测」长期停在旧的 FAIL，与端口实际可用性脱节
-		core.LogInfo(core.LogStun, "任务["+r.name+"] TCP映射未建立，巡检重试出站探测")
+		// 提前 return 会让「可用性自测」长期停在旧的 FAIL，与端口实际可用性脱节。
+		// 退避期内不重试（出站整体被阻断，重复探测与弹跳只会打断入站），也不重复打日志
+		if until := r.tcpRetryAt.Load(); until == 0 || time.Now().UnixMilli() >= until {
+			core.LogInfo(core.LogStun, "任务["+r.name+"] TCP映射未建立，巡检重试出站探测")
+		}
 		r.refreshTcpLink()
 	}
+	// 与手动自测/重建后复验串行：已有自测在途时本轮跳过（下轮再来），避免结论互相覆盖
+	if !r.verifyMu.TryLock() {
+		return
+	}
 	check, err := r.verifyChannel(false)
+	r.verifyMu.Unlock()
 	if err != nil {
 		return // 写库异常由 core 记日志，巡检不重复告警
 	}

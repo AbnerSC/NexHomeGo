@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"NexHomeGo/internal/core"
 )
@@ -352,6 +353,80 @@ func TestParseCheckResult(t *testing.T) {
 	// 空对象 → 空串
 	if got := parseCheckResult(toRoot(`{}`), "rid"); got != "" {
 		t.Errorf("空对象 got %q, want 空串", got)
+	}
+}
+
+// ==================== 自测仲裁：近期真实外网访问证据 ====================
+
+// TestRecentPeerInboundDesc 自测遇到「重建中」时以真实外网访问仲裁：
+// 无记录或超出窗口（max(60s, keepaliveSec*6)）返回空串，窗口内有记录返回描述文案。
+func TestRecentPeerInboundDesc(t *testing.T) {
+	r := &runner{keepaliveSec: 10} // 窗口取下限 60s
+	if got := r.recentPeerInboundDesc(); got != "" {
+		t.Errorf("无访问记录应返回空串，got %q", got)
+	}
+	r.lastPeerInbound.Store(time.Now().UnixMilli() - 30_000)
+	if got := r.recentPeerInboundDesc(); !strings.Contains(got, "30秒前") {
+		t.Errorf("窗口内应返回证据文案，got %q", got)
+	}
+	r.lastPeerInbound.Store(time.Now().UnixMilli() - 90_000)
+	if got := r.recentPeerInboundDesc(); got != "" {
+		t.Errorf("超出窗口应返回空串，got %q", got)
+	}
+	// keepaliveSec=25 → 窗口 150s：90s 前的访问仍在窗口内
+	r2 := &runner{keepaliveSec: 25}
+	r2.lastPeerInbound.Store(time.Now().UnixMilli() - 90_000)
+	if got := r2.recentPeerInboundDesc(); got == "" {
+		t.Error("keepaliveSec*6 窗口内应返回证据")
+	}
+}
+
+// TestRebuildBackoff 出站重建失败退避状态机：失败后设置重试点并只告警一次，
+// 恢复后清零——避免每个保活周期（10s）重复探测/弹跳与日志刷屏。
+func TestRebuildBackoff(t *testing.T) {
+	r := &runner{name: "test", keepaliveSec: 10}
+	r.deferRebuild("测试失败")
+	until := r.tcpRetryAt.Load()
+	if remain := until - time.Now().UnixMilli(); remain <= 0 || remain > rebuildBackoffSec*1000 {
+		t.Fatalf("退避窗口异常: %dms", remain)
+	}
+	if !r.rebuildWarned.Load() {
+		t.Fatal("失败后应标记已告警（同一故障不重复刷屏）")
+	}
+	// 再次失败：重试点滚动后移，告警标记保持（不再重复告警）
+	time.Sleep(10 * time.Millisecond)
+	r.deferRebuild("测试失败")
+	if r.tcpRetryAt.Load() <= until {
+		t.Fatal("重复失败应刷新重试时间")
+	}
+	r.cleanRebuildBackoff()
+	if r.tcpRetryAt.Load() != 0 || r.rebuildWarned.Load() {
+		t.Fatal("恢复后应清除退避与告警标记")
+	}
+}
+
+// TestMarkPeerVerifiedThrottle 真实外网访问刷新自测：同一自测周期内只刷一次，
+// 窗口外允许再次刷新；数据库未初始化时 Update 失败不应崩溃。
+func TestMarkPeerVerifiedThrottle(t *testing.T) {
+	r := &runner{name: "test", id: 1, keepaliveSec: 10}
+	now := time.Now().UnixMilli()
+	if r.markPeerVerified(now) {
+		t.Error("数据库未初始化时不应报告刷新成功")
+	}
+	if got := r.lastPeerVerifiedAt.Load(); got != now {
+		t.Fatalf("首次尝试应记录节流基准时间，got %d want %d", got, now)
+	}
+	// 窗口内（10s）第二次：直接跳过，不重复写库
+	if r.markPeerVerified(now + 9_000) {
+		t.Error("节流窗口内不应重复刷新")
+	}
+	if got := r.lastPeerVerifiedAt.Load(); got != now {
+		t.Errorf("窗口内时间不应变化，got %d", got)
+	}
+	// 窗口外：允许再次尝试（记录新基准，Update 仍失败但基准已前进）
+	_ = r.markPeerVerified(now + 10_000)
+	if got := r.lastPeerVerifiedAt.Load(); got != now+10_000 {
+		t.Errorf("窗口外应更新基准时间，got %d", got)
 	}
 }
 
