@@ -1,9 +1,9 @@
 # NexHome｜联枢
 
 ## GitHub
-https://github.com/AbnerSC/NexHome.git
+https://github.com/AbnerSC/NexHomeGo.git
 
-[![GitHub Stars](https://img.shields.io/github/stars/AbnerSC/NexHome?style=flat&label=Stars)](https://github.com/AbnerSC/NexHome/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/AbnerSC/NexHomeGo?style=flat&label=Stars)](https://github.com/AbnerSC/NexHomeGo/stargazers)
 [![Docker Pulls](https://img.shields.io/docker/pulls/babyfly/nex-home?label=Docker%20Pulls)](https://hub.docker.com/r/babyfly/nex-home)
 
 > 一站式内网节点守护工具，面向家庭 / 小型机房服务器，把内网能力安全对外打通。
