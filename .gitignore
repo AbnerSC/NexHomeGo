@@ -10,3 +10,4 @@
 # 迁移分析阶段的临时笔记
 /.datadir.txt
 /.routes.txt
+**.log
