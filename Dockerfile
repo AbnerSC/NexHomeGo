@@ -62,7 +62,7 @@ RUN if [ -n "${APT_MIRROR}" ]; then \
         sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list 2>/dev/null || true; \
     fi && \
     apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates tzdata && \
+    apt-get install -y --no-install-recommends ca-certificates tzdata curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /out/nexhome ./nexhome

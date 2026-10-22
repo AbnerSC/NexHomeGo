@@ -19,6 +19,5 @@ logs/
 *.db-wal
 *.txt
 *.md
-MIGRATION_PLAN.md
 .dockerignore
 Dockerfile

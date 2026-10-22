@@ -34,7 +34,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 512m # 推荐512MB以上
+          memory: 256m
     ulimits:
       nofile: { soft: 65535, hard: 65535 }
     healthcheck:
