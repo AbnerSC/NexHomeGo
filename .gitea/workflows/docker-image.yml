@@ -45,9 +45,13 @@ permissions:
 
 env:
   IMAGE_NAME: nex-home
-  # 自托管 runner 多在国内，注入 goproxy.cn 模块代理加速依赖下载（置空可关闭）
+  # 自托管 runner 在国内，经 Nexus 的 Go 模块代理下载依赖加速构建
+  # （GitHub 侧工作流不注入，走官方 proxy.golang.org）；置空则回退 Go 默认代理
   # 若 Nexus 建有 go 模块代理仓库（如 repository/go-group），改为对应地址即可
   GOPROXY_URL: https://repo.pi.mmxx.fun/repository/go-public,direct
+  # 运行阶段安装 ca-certificates/tzdata/curl 时经公共镜像源加速
+  # （GitHub 侧不注入，直接使用官方 deb.debian.org）
+  APT_MIRROR: repo.huaweicloud.com
   # buildkit（docker-container driver）拉取镜像不走 docker daemon 的 registry-mirrors，
   # 基础镜像需显式经 Nexus 的 docker 代理仓库拉取，避免 runner 直连 docker.io 超时
   DOCKER_PROXY: repo.pi.mmxx.fun/docker-public
@@ -135,8 +139,11 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 国内 runner 需要的镜像加速参数统一在此注入（Dockerfile 均默认为空）：
+          # GOPROXY 经 Nexus 模块代理拉依赖；APT_MIRROR 加速 apt 安装
           build-args: |
             GOPROXY=${{ env.GOPROXY_URL }}
+            APT_MIRROR=${{ env.APT_MIRROR }}
             VERSION=${{ steps.version.outputs.version }}
             GO_IMAGE=${{ env.DOCKER_PROXY }}/library/golang:1.27-bookworm
             BASE_IMAGE=${{ env.DOCKER_PROXY }}/library/debian:bookworm-slim

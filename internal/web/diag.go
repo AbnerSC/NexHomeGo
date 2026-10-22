@@ -1,6 +1,7 @@
 package web
 
 import (
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -84,6 +85,7 @@ func diagSample() {
 	s.Set("gcMs", int64(ms.PauseTotalNs/1e6))
 	s.Set("thr", runtime.NumGoroutine())
 	s.Set("rss", bytesToMB(rss))
+	s.Set("rssPeak", bytesToMB(RSSPeakBytes())) // VmHWM：内核单调记录的历史峰值
 	s.Set("cacheN", cacheN)
 	s.Set("cacheMB", cacheMB)
 
@@ -127,11 +129,26 @@ func diagRuntimeInfo() *core.Row {
 	m.Set("uptimeSec", int64(time.Since(bootTime).Seconds()))
 	m.Set("maxHeapMB", bytesToMB(int64(ms.HeapSys)))
 	m.Set("proc", procEnabled())
+	// 实例身份（自证“本页由哪个进程应答”）：容器内 hostname 即容器 ID 短串，
+	// 配合 PID / cgroup 路径 / 监听端口，可识别“浏览器连到了另一个实例”的情况。
+	m.Set("pid", os.Getpid())
+	m.Set("hostname", HostName())
+	m.Set("cgroup", ContainerCgroupPath())
+	m.Set("containerUsedMB", bytesToMB(ContainerMemUsageBytes()))
 	if lim := ContainerMemLimitBytes(); lim > 0 {
 		m.Set("containerLimitMB", bytesToMB(lim))
 	} else {
 		m.Set("containerLimitMB", -1)
 	}
+	// 监听端口与端口自愈状态：自愈改端口后，浏览器可能连到另一个实例。
+	confPort := 0
+	if snap, err := LoadAccessConfig(); err == nil {
+		confPort = snap.HTTPPort
+	}
+	m.Set("configPort", confPort)
+	m.Set("boundPort", HTTPPort())
+	lastErr, _ := core.GetConfig(KeyLastError)
+	m.Set("lastError", lastErr)
 	return m
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -75,7 +76,7 @@ var (
 	runMu           sync.Mutex
 	httpSrv         *http.Server
 	httpsSrv        *http.Server
-	boundPort       = -1
+	boundPort             = -1
 	activeCertID    int64 = -1
 	currentCfg      *Snapshot
 	lastHTTPSCertOK = true
@@ -119,6 +120,8 @@ func OnCertRenewed(taskID int64) {
 
 // Start 启动服务：读取数据库中的访问配置，首次启动带端口自愈。
 func Start() error {
+	// 先按容器内存上限约束 Go 运行时（GOMEMLIMIT），再起服务，避免堆涨过 mem_limit 被 OOM kill。
+	applyContainerMemoryLimit()
 	return startInternal(true)
 }
 
@@ -191,8 +194,8 @@ func startInternal(selfHeal bool) error {
 // launch 构建并启动一个 Web 实例（HTTP 监听器 + 可选 HTTPS 监听器），绑定失败返回错误。
 func launch(snap *Snapshot, https bool, cert *CertInfo, httpPort int, selfHeal bool) error {
 	httpSrv = &http.Server{
-		Addr:           net.JoinHostPort("", strconv.Itoa(httpPort)),
-		Handler:        http.HandlerFunc(serveHTTP),
+		Addr:              net.JoinHostPort("", strconv.Itoa(httpPort)),
+		Handler:           http.HandlerFunc(serveHTTP),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", httpPort))
@@ -233,7 +236,10 @@ func launch(snap *Snapshot, https bool, cert *CertInfo, httpPort int, selfHeal b
 		}
 		addr += "）"
 	}
-	core.LogInfo(core.LogSys, addr)
+	// 启动日志带上实例身份：与诊断页展示的 pid/host/cgroup 对照，
+	// 可快速判定“浏览器访问到的到底是哪个 nexhome 进程”（同名容器不可能并存，但宿主原生进程可以）。
+	core.LogInfo(core.LogSys, fmt.Sprintf("%s | 实例 pid=%d host=%s cgroup=%s",
+		addr, os.Getpid(), HostName(), ContainerCgroupPath()))
 	return nil
 }
 
@@ -243,9 +249,9 @@ func mountHTTPS(httpsPort int, cert *CertInfo, selfHeal bool) error {
 		tlsConf = &tls.Config{MinVersion: tls.VersionTLS12}
 	}
 	httpsSrv = &http.Server{
-		Addr:           fmt.Sprintf(":%d", httpsPort),
-		Handler:        http.HandlerFunc(serveHTTP),
-		TLSConfig:      tlsConf,
+		Addr:              fmt.Sprintf(":%d", httpsPort),
+		Handler:           http.HandlerFunc(serveHTTP),
+		TLSConfig:         tlsConf,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	raw, err := net.Listen("tcp", fmt.Sprintf(":%d", httpsPort))

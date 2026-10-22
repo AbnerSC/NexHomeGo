@@ -96,6 +96,10 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 不注入 GOPROXY / APT_MIRROR / GO_IMAGE / BASE_IMAGE：GitHub runner
+          # 可直连 Go 官方模块代理（proxy.golang.org）、Debian 官方源与 Docker Hub；
+          # 国内镜像加速参数仅由 .gitea/workflows/docker-image.yml 注入
+          # （Dockerfile 中对应 ARG 均为空默认值）
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
           # 关闭 provenance 证明，避免部分客户端拉取时出现 unknown digest

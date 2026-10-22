@@ -2,8 +2,11 @@ package web
 
 import (
 	"bufio"
+	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,7 +30,7 @@ type cpuSnap struct {
 }
 
 var (
-	cpuMu  sync.Mutex
+	cpuMu   sync.Mutex
 	cpuPrev *cpuSnap
 )
 
@@ -134,13 +137,20 @@ func readMemInfo() (memInfo, bool) {
 // ---------- 进程 RSS ----------
 
 // RSSBytes 进程常驻物理内存（字节）。优先 /proc/self/status 的 VmRSS；不可用返回 -1。
-func RSSBytes() int64 {
+func RSSBytes() int64 { return procStatusKB("VmRSS:") }
+
+// RSSPeakBytes 进程 RSS 峰值（VmHWM，内核单调记录、不回落，重启后归零）；不可用返回 -1。
+// 与 RSS 一起对照：若峰值远小于容器 cgroup 记账的历史高位，说明两者不是同一个进程。
+func RSSPeakBytes() int64 { return procStatusKB("VmHWM:") }
+
+// procStatusKB 从 /proc/self/status 取以 kB 计的单值字段（如 VmRSS/VmHWM），转为字节。
+func procStatusKB(field string) int64 {
 	b, err := os.ReadFile(procBase + "/self/status")
 	if err != nil {
 		return -1
 	}
 	for _, line := range strings.Split(string(b), "\n") {
-		if strings.HasPrefix(line, "VmRSS:") {
+		if strings.HasPrefix(line, field) {
 			f := strings.Fields(strings.TrimSpace(line))
 			if len(f) >= 2 {
 				if kb, e := strconv.ParseInt(f[1], 10, 64); e == nil {
@@ -152,25 +162,105 @@ func RSSBytes() int64 {
 	return -1
 }
 
-// ---------- 容器内存上限（cgroup v2 / v1） ----------
+// ---------- 容器内存上限 / 用量（cgroup v2 / v1） ----------
+
+// cgroupRef 解析 /proc/self/cgroup，返回 (版本, 本进程所属 memory 层级路径)。
+// v2 行形如 "0::/system.slice/docker-<id>.scope"；v1 行形如 "12:memory:/docker/<id>"。
+// 必要性：cgroup v1 下 Docker 默认 cgroupns=host，容器内 /sys/fs/cgroup 仍是宿主机视图，
+// 固定路径 /sys/fs/cgroup/memory/memory.limit_in_bytes 读到的是根/上层 cgroup 的限制
+// （数字与容器无关），必须按本进程路径拼出容器自己的限制文件。
+func cgroupRef() (ver int, path string) {
+	b, err := os.ReadFile(procBase + "/self/cgroup")
+	if err != nil {
+		return 0, "/"
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		s := strings.TrimSpace(line)
+		if s == "" {
+			continue
+		}
+		if strings.HasPrefix(s, "0::") { // unified 层级优先
+			return 2, orRoot(strings.TrimPrefix(s, "0::"))
+		}
+		if f := strings.SplitN(s, ":", 3); len(f) == 3 && f[1] == "memory" {
+			ver, path = 1, f[2]
+		}
+	}
+	return ver, orRoot(path)
+}
+
+func orRoot(p string) string {
+	if p == "" {
+		return "/"
+	}
+	return p
+}
+
+// ContainerCgroupPath 本进程 cgroup 的可读描述（诊断页自证身份用）；不可读返回 ""。
+func ContainerCgroupPath() string {
+	ver, path := cgroupRef()
+	if ver == 0 {
+		return ""
+	}
+	return fmt.Sprintf("v%d %s", ver, path)
+}
+
+// HostName 本机主机名（容器内即容器 ID 短串）；不可读返回 "-"。
+// 与 PID 一起用于区分「页面到底由哪个进程应答」。
+func HostName() string {
+	if h, err := os.Hostname(); err == nil && h != "" {
+		return h
+	}
+	return "-"
+}
+
+// containerCgroupFile 拼出本进程 cgroup 下某文件的绝对路径（v2/v1 文件名不同）。
+func containerCgroupFile(ver int, path, v2Name, v1Name string) string {
+	if ver == 2 {
+		return filepath.Join("/sys/fs/cgroup", path, v2Name)
+	}
+	return filepath.Join("/sys/fs/cgroup/memory", path, v1Name)
+}
 
 // ContainerMemLimitBytes 容器可用内存上限（字节）；无限制或不可读返回 -1。
-// 优先 cgroup v2（/sys/fs/cgroup/memory.max），回退 v1（memory.limit_in_bytes，超大值视为无限制）。
 func ContainerMemLimitBytes() int64 {
-	if v, ok := readMemLimitFile("/sys/fs/cgroup/memory.max"); ok {
+	if ver, path := cgroupRef(); ver != 0 {
+		if v, ok := readCgroupInt(containerCgroupFile(ver, path, "memory.max", "memory.limit_in_bytes")); ok {
+			return v
+		}
+		return -1
+	}
+	// /proc/self/cgroup 不可读：退回固定路径猜测（cgroupns 私有时恰好指向容器自身层级）。
+	if v, ok := readCgroupInt("/sys/fs/cgroup/memory.max"); ok {
 		return v
 	}
-	if v, ok := readMemLimitFile("/sys/fs/cgroup/memory/memory.limit_in_bytes"); ok {
-		// v1 无限制时给出接近 int64 上限的天文数字，超过物理内存即视为无限制。
-		if v > 1<<62 {
-			return -1
-		}
+	if v, ok := readCgroupInt("/sys/fs/cgroup/memory/memory.limit_in_bytes"); ok {
 		return v
 	}
 	return -1
 }
 
-func readMemLimitFile(path string) (int64, bool) {
+// ContainerMemUsageBytes 容器 cgroup 当前内存记账值（字节，含可回收 page cache）；
+// 与 docker stats 的 MEM USAGE 同口径，可与进程 RSS 对照。不可读返回 -1。
+func ContainerMemUsageBytes() int64 {
+	if ver, path := cgroupRef(); ver != 0 {
+		if v, ok := readCgroupInt(containerCgroupFile(ver, path, "memory.current", "memory.usage_in_bytes")); ok {
+			return v
+		}
+		return -1
+	}
+	if v, ok := readCgroupInt("/sys/fs/cgroup/memory.current"); ok {
+		return v
+	}
+	if v, ok := readCgroupInt("/sys/fs/cgroup/memory/memory.usage_in_bytes"); ok {
+		return v
+	}
+	return -1
+}
+
+// readCgroupInt 读取单值 cgroup 文件；空、"max"、解析失败或非正值返回 false。
+// cgroup v1 的「无限制」是接近 int64 上限的天文数字，一并按不可用处理。
+func readCgroupInt(path string) (int64, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return 0, false
@@ -180,10 +270,37 @@ func readMemLimitFile(path string) (int64, bool) {
 		return 0, false
 	}
 	v, e := strconv.ParseInt(s, 10, 64)
-	if e != nil || v <= 0 {
+	if e != nil || v <= 0 || v > 1<<62 {
 		return 0, false
 	}
 	return v, true
+}
+
+// ---------- 按容器上限约束 Go 运行时 ----------
+
+// applyContainerMemoryLimit 启动时让 Go 运行时尊重容器内存上限：
+// 未显式设置 GOMEMLIMIT（环境变量）且能读到 cgroup 上限时，把软内存上限设为 cgroup 上限的 75%，
+// 促使 GC 在接近容器硬限前提前收缩。否则一旦堆涨过 mem_limit，内核会直接 OOM kill，进程无任何日志。
+// 若代码/环境已给出更严格的软上限，则不放松。
+func applyContainerMemoryLimit() {
+	if os.Getenv("GOMEMLIMIT") != "" {
+		return // 已由环境变量指定，尊重用户配置
+	}
+	lim := ContainerMemLimitBytes()
+	if lim <= 0 {
+		return // 无限制或不可读，保持 Go 默认行为
+	}
+	target := lim / 4 * 3
+	if target < 64<<20 {
+		target = 64 << 20 // 过小的上限会导致 GC 抖动，设下限 64 MB
+	}
+	if cur := debug.SetMemoryLimit(-1); cur < target {
+		return // 已有更严格的软上限，不放松
+	}
+	debug.SetMemoryLimit(target)
+	core.LogInfo(core.LogSys, fmt.Sprintf(
+		"已按容器内存上限启用 Go 软内存限制: %.0f MB（cgroup 上限 %.0f MB，可用 GOMEMLIMIT 环境变量覆盖）",
+		bytesToMB(target), bytesToMB(lim)))
 }
 
 // ---------- 操作系统展示名（缓存） ----------

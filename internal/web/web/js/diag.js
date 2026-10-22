@@ -148,6 +148,36 @@ function diagLogRows(list, emptyText) {
       </tr>`).join('');
 }
 
+/** 实例身份与口径校验：PID / 容器主机名 / cgroup / 监听端口。
+ *  用于回答「这个页面到底是不是当前容器在应答」——进程 RSS 远大于 cgroup 记账、
+ *  端口发生自愈时给出告警（端口被占用后程序会静默改端口，浏览器可能连到另一个实例）。 */
+function diagInstance(go, s) {
+    const msgs = [];
+    // VmHWM 是内核单调记录的历史峰值，比瞬时 RSS 更能说明「这个进程曾经吃下多少」
+    const peak = Number(s.rssPeak) > 0 ? Number(s.rssPeak) : Number(s.rss || 0);
+    if (go.containerUsedMB >= 0 && peak > 0 && peak > go.containerUsedMB * 1.5) {
+        msgs.push(`进程 RSS 峰值（${fmtDiagMB(peak)}）明显大于容器 cgroup 记账（${fmtDiagMB(go.containerUsedMB)}），`
+            + '本页数据很可能来自另一个进程实例（端口被旧实例占用后自愈换端口是常见原因）。');
+    }
+    if (go.configPort > 0 && go.boundPort > 0 && go.configPort !== go.boundPort) {
+        msgs.push(`HTTP 端口已自愈：配置 ${go.configPort}，实际监听 ${go.boundPort}。`
+            + '请确认浏览器访问的端口上就是当前容器。');
+    }
+    if (go.lastError) msgs.push('上次启动告警：' + go.lastError);
+    const warn = msgs.length
+        ? `<div class="tip" style="margin-top:8px;border-color:var(--orange)">${msgs.map(esc).join('<br>')}</div>`
+        : '';
+    return `
+        <div class="small muted" style="margin-top:8px">
+          ${esc(go.version || '')} · PID ${go.pid || '-'} · 主机 ${esc(go.hostname || '-')} · ${go.numCpu || 0} CPU ·
+          运行 ${Math.floor((go.uptimeSec || 0) / 3600)}h${Math.floor((go.uptimeSec || 0) % 3600 / 60)}m ·
+          监听 ${go.boundPort || '-'}${go.configPort > 0 && go.configPort !== go.boundPort ? `（配置 ${go.configPort}）` : ''} ·
+          堆已申请 ${fmtDiagMB(go.maxHeapMB)} · 容器限制 ${go.containerLimitMB >= 0 ? fmtDiagMB(go.containerLimitMB) : '无限制/不可读'} · /proc ${go.proc ? '可用' : '不可用（非 Linux）'}
+        </div>
+        ${go.cgroup ? `<div class="small muted" style="margin-top:4px">cgroup ${esc(go.cgroup)}</div>` : ''}
+        ${warn}`;
+}
+
 async function loadDiag() {
     let snap;
     try { snap = await api('GET', '/api/diag/snapshot'); } catch (e) { return; }
@@ -159,19 +189,19 @@ async function loadDiag() {
     body.innerHTML = `
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">实时内存分解</h3>
-        <div class="small muted" style="margin:-6px 0 10px">仅统计本系统（进程）内存占用，宿主机整体资源见顶部监控</div>
+        <div class="small muted" style="margin:-6px 0 10px">进程 RSS 为进程视角（含共享页与未归还页），容器占用/限制以 cgroup 记账为准；宿主机整体资源见顶部监控</div>
         <table>
-          ${diagBar('进程 RSS', s.rss, go.containerLimitMB, `${fmtDiagMB(s.rss)}${s.rss < 0 ? '（非 Linux 不可读）' : ''}`)}
+          ${go.containerLimitMB >= 0 ? diagBar('容器内存（cgroup 记账）', go.containerUsedMB, go.containerLimitMB,
+              `${fmtDiagMB(go.containerUsedMB)} / ${fmtDiagMB(go.containerLimitMB)}`) : ''}
+          ${diagBar('进程 RSS', s.rss, go.containerLimitMB > 0 ? go.containerLimitMB : Math.max(s.rss || 0, 1),
+              `${fmtDiagMB(s.rss)}${s.rss < 0 ? '（非 Linux 不可读）' : `（进程视角，峰值 ${fmtDiagMB(s.rssPeak)}）`}`)}
           ${diagBar('Go 堆', s.heap, s.heapSys, `${fmtDiagMB(s.heap)} / 已向系统申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`)}
           ${diagBar('协程栈', s.stack, s.sys, fmtDiagMB(s.stack))}
           ${diagBar('运行时合计（Sys）', s.sys, s.rss > 0 ? s.rss : 0, fmtDiagMB(s.sys))}
           <tr><th>协程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 协程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
           <tr><th>代理文件缓存</th><td></td><td class="diag-val">${s.cacheN || 0} 项 · ${s.cacheMB < 0 ? '未启用' : fmtDiagMB(s.cacheMB) + '（磁盘）'}</td></tr>
         </table>
-        <div class="small muted" style="margin-top:8px">
-          ${esc(go.version || '')} · ${go.numCpu || 0} CPU · 运行 ${Math.floor((go.uptimeSec || 0) / 3600)}h${Math.floor((go.uptimeSec || 0) % 3600 / 60)}m ·
-          堆已申请 ${fmtDiagMB(go.maxHeapMB)} · 容器限制 ${go.containerLimitMB >= 0 ? fmtDiagMB(go.containerLimitMB) : '无限制/不可读'} · /proc ${go.proc ? '可用' : '不可用（非 Linux）'}
-        </div>
+        ${diagInstance(go, s)}
       </div>
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">内存时间线</h3>
