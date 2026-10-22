@@ -1,6 +1,7 @@
 /* ============ 内存诊断模块 ============ */
 /* 实时内存分解 + 时间线曲线 + 内存跳变点与 op_log 时间线的关联分析。
-   数据来源：/api/diag/snapshot（采样时间线）、/api/diag/analysis（跳变检测 + 日志关联）、/api/diag/nmt（按需堆外明细）。 */
+   数据来源：/api/diag/snapshot（采样时间线）、/api/diag/analysis（跳变检测 + 日志关联）。
+   Go 运行时版本：堆/GC/协程由 runtime.MemStats 提供，无 JVM 的 Metaspace/NMT 概念。 */
 'use strict';
 
 let diagAutoRefresh = true;
@@ -43,13 +44,13 @@ function diagTimeShort(t) {
     return p.length > 1 ? p[1] : t;
 }
 
-/** 内存时间线双折线图（容器内存 + JVM 堆）：SVG 只画网格线与折线，坐标轴/悬停用 HTML 叠加，
+/** 内存时间线双折线图（容器内存 + Go 堆）：SVG 只画网格线与折线，坐标轴/悬停用 HTML 叠加，
     规避 preserveAspectRatio="none" 对 SVG 文字的拉伸变形。 */
 function diagChart(history) {
     const W = 900, H = 220;
     let maxV = 1;
     history.forEach(s => {
-        maxV = Math.max(maxV, Number(s.mem || 0), Number(s.heapC || 0));
+        maxV = Math.max(maxV, Number(s.mem || 0), Number(s.heap || 0));
     });
     maxV = Math.ceil(maxV * 1.1);
     diagChartState = { history, maxV };
@@ -76,7 +77,7 @@ function diagChart(history) {
     return `
       <div class="diag-legend">
         <span><i class="dot" style="background:var(--cyan)"></i>容器内存（当前 ${fmtDiagMB(last?.mem)} / 上限 ${fmtDiagMB(last?.memM)}）</span>
-        <span><i class="dot" style="background:var(--green)"></i>JVM 堆（当前 ${fmtDiagMB(last?.heap)}）</span>
+        <span><i class="dot" style="background:var(--green)"></i>Go 堆（当前 ${fmtDiagMB(last?.heap)}）</span>
         <span class="muted small">纵轴满刻度 ${fmtDiagMB(maxV)}，共 ${n} 个样本${first ? `，跨度 ${first.time} ~ ${last.time}` : ''}</span>
       </div>
       <div class="diag-chart">
@@ -115,7 +116,7 @@ function bindDiagChart() {
         tip.hidden = false;
         tip.innerHTML = `<div class="t">${esc(s.time || '')}</div>`
             + `<div><i class="dot" style="background:var(--cyan)"></i>容器内存 ${fmtDiagMB(s.mem)}</div>`
-            + `<div><i class="dot" style="background:var(--green)"></i>JVM 堆 ${fmtDiagMB(s.heap)}</div>`;
+            + `<div><i class="dot" style="background:var(--green)"></i>Go 堆 ${fmtDiagMB(s.heap)}</div>`;
         tip.style.left = xPct + '%';
         tip.classList.toggle('flip', xPct > 62); // 靠近右缘时把气泡翻到准线左侧，避免溢出
     });
@@ -153,25 +154,22 @@ async function loadDiag() {
     if (!body) return; // 已离开页面
     diagChartState = null; // 重渲染前先失效，避免悬停读到已卸载的旧图
     const s = snap.latest || {};
-    const jvm = snap.jvm || {};
+    const go = snap.go || {};
     body.innerHTML = `
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">实时内存分解</h3>
         <table>
           ${diagBar('容器内存', s.mem, s.memM, `${fmtDiagMB(s.mem)} / ${fmtDiagMB(s.memM)}`)}
           ${diagBar('进程 RSS', s.rss, s.memM, `${fmtDiagMB(s.rss)}${s.rss < 0 ? '（非 Linux 不可读）' : ''}`)}
-          ${diagBar('JVM 堆', s.heap, s.heapM, `${fmtDiagMB(s.heap)} / 已提交 ${fmtDiagMB(s.heapC)} / 上限 ${fmtDiagMB(s.heapM)}`)}
-          ${diagBar('元空间', s.meta, 256, fmtDiagMB(s.meta))}
-          ${diagBar('CodeCache', s.code, 128, fmtDiagMB(s.code))}
-          ${diagBar('非堆合计', s.nonHeap, 512, fmtDiagMB(s.nonHeap))}
-          ${diagBar('NIO 直接缓冲', s.dir, s.dirCap, `${fmtDiagMB(s.dir)} / 容量 ${fmtDiagMB(s.dirCap)}（${s.dirCnt || 0} 个）`)}
-          ${diagBar('映射缓冲', s.mapped, 64, fmtDiagMB(s.mapped))}
-          <tr><th>线程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 线程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
-          <tr><th>代理文件缓存</th><td></td><td class="diag-val">${s.cacheN || 0} 项 · ${fmtDiagMB(s.cacheMB)}（磁盘）</td></tr>
+          ${diagBar('Go 堆', s.heap, s.heapSys, `${fmtDiagMB(s.heap)} / 已向系统申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`)}
+          ${diagBar('协程栈', s.stack, s.sys, fmtDiagMB(s.stack))}
+          ${diagBar('运行时合计（Sys）', s.sys, s.memM, fmtDiagMB(s.sys))}
+          <tr><th>协程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 协程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
+          <tr><th>代理文件缓存</th><td></td><td class="diag-val">${s.cacheN || 0} 项 · ${s.cacheMB < 0 ? '未启用' : fmtDiagMB(s.cacheMB) + '（磁盘）'}</td></tr>
         </table>
         <div class="small muted" style="margin-top:8px">
-          ${esc(jvm.vm || '')} · 运行 ${Math.floor((jvm.uptimeSec || 0) / 3600)}h${Math.floor((jvm.uptimeSec || 0) % 3600 / 60)}m ·
-          堆上限 ${fmtDiagMB(jvm.maxHeapMB)} · NMT ${jvm.nmt ? '已开启' : '未开启（堆外仅能看到 NIO 直接缓冲，Netty 池化堆外需开 NMT 才可见）'}
+          ${esc(go.version || '')} · ${go.numCpu || 0} CPU · 运行 ${Math.floor((go.uptimeSec || 0) / 3600)}h${Math.floor((go.uptimeSec || 0) % 3600 / 60)}m ·
+          堆已申请 ${fmtDiagMB(go.maxHeapMB)} · 容器限制 ${go.containerLimitMB >= 0 ? fmtDiagMB(go.containerLimitMB) : '无限制/不可读'} · /proc ${go.proc ? '可用' : '不可用（非 Linux）'}
         </div>
       </div>
       <div class="panel">
@@ -227,48 +225,6 @@ async function exportDiag() {
     } catch (e) { toast(e.message, 'err'); }
 }
 
-/** 按需拉取堆外原生内存明细（服务端带缓存，不点不触发） */
-async function loadDiagNmt() {
-    const box = $('#diagNmt');
-    if (!box) return;
-    box.innerHTML = '<p class="muted small">正在按需生成 NMT 汇总...</p>';
-    let d;
-    try { d = await api('GET', '/api/diag/nmt'); }
-    catch (e) { box.innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
-    if (!d.available) {
-        box.innerHTML = `<p class="muted small">${esc(d.reason || 'NMT 不可用')}</p>`;
-        return;
-    }
-    const rows = (d.categories || []).map(c => `
-        <tr><td>${esc(c.name)}</td>
-            <td class="diag-val">${fmtDiagMB(c.committedMB)}</td>
-            <td class="diag-val muted">${fmtDiagMB(c.reservedMB)}</td></tr>`).join('');
-    // 与启动基线的差值：直接指出哪一类原生内存长大了（内存不释放定位关键）
-    let diffHtml = '';
-    if (d.diff && d.diff.length) {
-        const drows = d.diff.map(r => `
-            <tr><td>${esc(r.name)}</td>
-                <td class="diag-val muted">${fmtDiagMB(r.baseMB)}</td>
-                <td class="diag-val">${fmtDiagMB(r.nowMB)}</td>
-                <td class="diag-val" style="color:${r.deltaMB > 0 ? 'var(--red)' : 'var(--green)'}">${r.deltaMB > 0 ? '+' : ''}${r.deltaMB} MB</td></tr>`).join('');
-        diffHtml = `
-          <h3 style="font-size:14px;margin:16px 0 8px">与启动基线的变化（自 ${esc(d.baselineTime || '')}）</h3>
-          <div class="tip">原生内存合计变化 <b style="color:${d.totalDeltaMB > 0 ? 'var(--red)' : 'var(--green)'}">${d.totalDeltaMB > 0 ? '+' : ''}${d.totalDeltaMB} MB</b>，下表按增幅排序，增长最多的类别即内存不释放的嫌疑人。</div>
-          <table>
-            <thead><tr><th>类别</th><th style="width:120px">启动时</th><th style="width:120px">当前</th><th style="width:120px">变化</th></tr></thead>
-            <tbody>${drows}</tbody>
-          </table>`;
-    }
-    box.innerHTML = `
-        <table>
-          <thead><tr><th>类别</th><th style="width:140px">已提交</th><th style="width:140px">保留</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="3" class="muted">无分类数据</td></tr>'}</tbody>
-        </table>
-        <div class="small muted" style="margin-top:8px">合计已提交 ${fmtDiagMB(d.totalCommittedMB)} · 保留 ${fmtDiagMB(d.totalReservedMB)}（
-          JVM 堆只是其中一项；Netty 池化等堆外分配多归在 Internal/Other。结果缓存约 60 秒）</div>
-        ${diffHtml}`;
-}
-
 function armDiagRefresh() {
     if (diagTimer) { clearInterval(diagTimer); diagTimer = null; }
     if (diagAutoRefresh) diagTimer = setInterval(() => loadDiag().catch(() => { }), 10000);
@@ -279,8 +235,8 @@ async function renderDiag() {
       <div class="toolbar">
         <label class="small muted">分析指标</label>
         <select id="diagMetric">
-          <option value="container">容器内存（含堆外/RSS）</option>
-          <option value="heap">JVM 堆</option>
+          <option value="container">容器内存（含运行时/RSS）</option>
+          <option value="heap">Go 堆</option>
         </select>
         <button class="btn" onclick="runDiagAnalysis()">分析内存跳变</button>
         <button class="btn" onclick="loadDiag()">刷新分解</button>
@@ -289,17 +245,9 @@ async function renderDiag() {
         <div class="spacer"></div>
         <span class="muted small">采样自本次进程启动，运行越久时间线越完整</span>
       </div>
-      <div class="tip" style="margin-bottom:12px">用于定位「内存突然上升且不释放」：先看<b>实时分解</b>判断涨在堆还是堆外/RSS，
+      <div class="tip" style="margin-bottom:12px">用于定位「内存突然上升且不释放」：先看<b>实时分解</b>判断涨在 Go 堆、协程栈还是运行时/RSS，
         再点<b>分析内存跳变</b>自动找出曲线跳升的时间点，并把该时刻前后的 <b>op_log 事件</b>对齐展示。</div>
       <div id="diagLive"><p class="muted">加载中...</p></div>
-      <div class="panel">
-        <h3 style="font-size:14px;margin-bottom:10px">堆外原生内存明细（NMT）</h3>
-        <div class="toolbar" style="margin-bottom:8px">
-          <button class="btn" onclick="loadDiagNmt()">加载 / 刷新明细</button>
-          <span class="muted small">按需读取（不常驻、带缓存），把 Netty 池化等堆外占用从 Internal/Other 拆出</span>
-        </div>
-        <div id="diagNmt"><p class="muted small">尚未加载。需启动时开了 -XX:NativeMemoryTracking=summary。</p></div>
-      </div>
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">关联分析</h3>
         <div id="diagAnalysis"><p class="muted small">点击上方「分析内存跳变」生成结论。</p></div>

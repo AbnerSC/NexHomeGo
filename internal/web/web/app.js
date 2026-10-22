@@ -206,7 +206,7 @@ $('#modalClose').addEventListener('click', closeModal);
 async function loadSysInfo() {
     try {
         const i = await api('GET', '/api/system/info');
-        $('#sysInfo').textContent = `v${i.version} · Java ${i.javaVersion}`;
+        $('#sysInfo').textContent = `v${i.version} · ${i.javaVersion}`;
     } catch (e) { /* ignore */ }
 }
 

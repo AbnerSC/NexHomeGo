@@ -49,9 +49,9 @@
                 <h2>1. 快速开始</h2>
                 <details class="doc-sub-sec" open>
                     <summary><h3>1.1 首次启动与登录</h3></summary>
-                    <p>NexHome 是<b>单进程、前后端一体</b>的轻量服务：启动一个 Java 程序、默认只占用一个端口，所有任务与配置持久化在程序运行目录下的 <code>data/nexhome.db</code>（SQLite）。</p>
+                    <p>NexHome 是<b>单进程、前后端一体</b>的轻量服务：启动一个 Go 单二进制、默认只占用一个端口，所有任务与配置持久化在程序运行目录下的 <code>data/nexhome.db</code>（SQLite）。</p>
                     <ol>
-                        <li>启动服务（Docker 或裸机 jar，见 <a href="#sec-deploy">第 15 章</a>）。</li>
+                        <li>启动服务（Docker 或裸机二进制，见 <a href="#sec-deploy">第 15 章</a>）。</li>
                         <li>浏览器打开 <code>http://127.0.0.1:8090</code>（默认端口 8090）。</li>
                         <li>首次启动时系统会<b>随机生成 16 位高强度初始密码并打印到控制台</b>（形如「首次启动，已生成随机初始密码……」，含大小写字母、数字与符号）。<b>系统不存在任何固定默认密码</b>，请到控制台/容器日志读取。</li>
                         <li>输入密码登录，<b>立即</b>到「系统设置 → 修改登录密码」更换为自己知道的密码。</li>
@@ -91,7 +91,7 @@
                         <tr><td>⚙️ 系统设置</td><td>访问配置、HTTPS、安全入口、凭证、密码、备份</td><td><a href="#sec-settings">第 14 章</a></td></tr>
                         </tbody>
                     </table>
-                    <p>顶栏右侧常驻 <b>CPU / 内存 / 虚拟内存</b> 三项实时负载（每 5 秒刷新，≥60% 变橙、≥85% 变红），以及 <b>📖 使用文档</b>（打开本页）与 <b>退出登录</b> 按钮。左下角显示当前版本号与 Java 版本。</p>
+                    <p>顶栏右侧常驻 <b>CPU / 内存 / 虚拟内存</b> 三项实时负载（每 5 秒刷新，≥60% 变橙、≥85% 变红），以及 <b>📖 使用文档</b>（打开本页）与 <b>退出登录</b> 按钮。左下角显示当前版本号与 Go 运行时版本。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>1.4 使用前建议的三步顺序</h3></summary>
@@ -449,7 +449,7 @@
                     <ol>
                         <li>先点「📡 探测 NAT 类型」：<b>对称型</b>无法纯 STUN 穿透 → 改用路由器端口转发。</li>
                         <li><b>受限锥形</b> → 在任务中填写「对端公网地址」由本端主动打洞，或请对端配合互打。</li>
-                        <li>确认<b>主机防火墙</b>已放行监听端口（Windows：允许 Java 通过「专用 / 公用网络」的入站规则）。</li>
+                        <li>确认<b>主机防火墙</b>已放行监听端口（Windows：允许 nexhome 通过「专用 / 公用网络」的入站规则）。</li>
                         <li>确认目标内网服务本身在监听且允许来自该地址的访问。</li>
                         <li>点「🔎 可达性自测」复核；结果仍为 FAIL 时到「<a href="#sec-logs">操作日志</a>」的 <b>STUN</b> 模块看详细原因。</li>
                     </ol>
@@ -910,7 +910,7 @@
                 <h2>13. 内存诊断</h2>
                 <details class="doc-sub-sec" open>
                     <summary><h3>13.1 用途与使用思路</h3></summary>
-                    <p>用于定位「<b>内存突然上升且不释放</b>」。推荐三步：先看<b>实时内存分解</b>判断涨在堆、堆外还是 RSS → 再点「<b>分析内存跳变</b>」自动找出曲线跳升的时间点 → 页面会把该时刻前后的 <b>op_log 事件</b>对齐展示，直接看到“是什么动作引起的”。</p>
+                    <p>用于定位「<b>内存突然上升且不释放</b>」。推荐三步：先看<b>实时内存分解</b>判断涨在 Go 堆、协程栈还是运行时/RSS → 再点「<b>分析内存跳变</b>」自动找出曲线跳升的时间点 → 页面会把该时刻前后的 <b>op_log 事件</b>对齐展示，直接看到“是什么动作引起的”。</p>
                     <p>采样自<b>本次进程启动</b>，每 <b>10 秒</b>一个样本，运行越久时间线越完整。默认<b>自动刷新</b>已勾选（10 秒一次）。</p>
                 </details>
                 <details class="doc-sub-sec">
@@ -920,25 +920,22 @@
                         <tbody>
                         <tr><td>容器内存</td><td>当前用量 / cgroup 上限，带比例条（<b>≥60% 变橙、≥85% 变红</b>）。</td></tr>
                         <tr><td>进程 RSS</td><td>进程常驻物理内存 / 容器上限；<b>非 Linux 环境不可读</b>时显示「（非 Linux 不可读）」。</td></tr>
-                        <tr><td>JVM 堆</td><td>已用 / 已提交 / 上限三个值。</td></tr>
-                        <tr><td>元空间 Metaspace</td><td>进度条参考上限按 <b>256 MB</b> 绘制。</td></tr>
-                        <tr><td>CodeCache</td><td>参考上限按 <b>128 MB</b> 绘制。</td></tr>
-                        <tr><td>非堆合计</td><td>参考上限按 <b>512 MB</b> 绘制。</td></tr>
-                        <tr><td>NIO 直接缓冲</td><td>已用 / 容量，并给出缓冲对象个数（DirectByteBuffer）。</td></tr>
-                        <tr><td>映射缓冲</td><td>MappedByteBuffer，参考上限按 <b>64 MB</b> 绘制。</td></tr>
-                        <tr><td>线程 / GC</td><td>当前线程数 · GC 次数 / 耗时毫秒。</td></tr>
+                        <tr><td>Go 堆</td><td>已用 / 已向系统申请（HeapSys）/ 存活对象个数三个值。</td></tr>
+                        <tr><td>协程栈</td><td>全部协程（goroutine）的栈内存合计，进度条参考上限按运行时合计 Sys 绘制。</td></tr>
+                        <tr><td>运行时合计（Sys）</td><td>Go 运行时已向系统申请的总内存（堆 + 栈 + GC 元数据等）。</td></tr>
+                        <tr><td>协程 / GC</td><td>当前协程数 · GC 次数 / 耗时毫秒。</td></tr>
                         <tr><td>代理文件缓存</td><td>代理中心磁盘缓存项数与占用（磁盘，不占内存）。</td></tr>
                         </tbody>
                     </table>
-                    <p>下方小字给：JVM 名称、运行时长、堆上限、以及 <b>NMT 是否已开启</b>。未开启时提示“堆外仅能看到 NIO 直接缓冲，Netty 池化堆外需开 NMT 才可见”。</p>
+                    <p>下方小字给：<b>Go 运行时版本</b>、CPU 核数、运行时长、堆已向系统申请的总量、容器内存限制（无限制或不可读时明确标注），以及 <code>/proc</code> 是否可读（非 Linux 环境进程 RSS 显示「不可读」）。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>13.3 内存时间线</h3></summary>
-                    <p>双折线图：<b>容器内存</b>（青）与 <b>JVM 堆</b>（绿）。纵轴满刻度自动为曲线峰值×1.1，图例显示当前值与上限、样本数与时间跨度。鼠标悬停出现<b>十字准线 + 气泡</b>，给出该样本点的精确时间与两个值（靠近右缘时气泡自动翻到左侧避免溢出）。至少需 <b>2 个样本</b>才成图，否则提示稍后再刷新。</p>
+                    <p>双折线图：<b>容器内存</b>（青）与 <b>Go 堆</b>（绿）。纵轴满刻度自动为曲线峰值×1.1，图例显示当前值与上限、样本数与时间跨度。鼠标悬停出现<b>十字准线 + 气泡</b>，给出该样本点的精确时间与两个值（靠近右缘时气泡自动翻到左侧避免溢出）。至少需 <b>2 个样本</b>才成图，否则提示稍后再刷新。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>13.4 分析内存跳变</h3></summary>
-                    <p>工具栏「分析指标」可选 <b>容器内存（含堆外/RSS）</b> 或 <b>JVM 堆</b>，点「分析内存跳变」后生成四块结果：</p>
+                    <p>工具栏「分析指标」可选 <b>容器内存（含运行时/RSS）</b> 或 <b>Go 堆</b>，点「分析内存跳变」后生成四块结果：</p>
                     <ol>
                         <li><b>结论摘要</b>：时间跨度内从多少变到多少、净增多少 MB；若检测到跳变，指出<b>最大单周期跳升发生的时间</b>（如 42.3 MB → 78.1 MB，<b>+35.8 MB</b>）；曲线平稳时明确提示“未检测到明显的单周期跳升”。样本不足 2 个时提示无法定位。</li>
                         <li><b>跳变点前后日志</b>：展示跳变时刻<b>前后各 2 分钟</b>的 op_log 记录（时间/模块/级别/内容，ERROR 红、WARN 橙）。</li>
@@ -947,20 +944,16 @@
                     </ol>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>13.5 堆外原生内存明细（NMT）</h3></summary>
-                    <p>需启动时带 <code>-XX:NativeMemoryTracking=summary</code>（官方镜像的 Dockerfile <b>已默认开启</b>）。点「加载 / 刷新明细」才拉取（不常驻、服务端带缓存，约 60 秒），展示各类别的<b>已提交 / 保留</b>，并给出与<b>启动基线的变化表</b>：按增幅排序，增长最多的类别（正数红字 +N MB，减少绿字）即“内存不释放的嫌疑人”。合计行提醒：JVM 堆只是其中一项，<b>Netty 池化等堆外分配多归在 Internal / Other</b>。未开启 NMT 时此处直接给出原因说明。</p>
-                </details>
-                <details class="doc-sub-sec">
-                    <summary><h3>13.6 导出快照</h3></summary>
+                    <summary><h3>13.5 导出快照</h3></summary>
                     <p>「导出快照 JSON」把当前完整采样数据（实时分解 + 全部历史样本）下载为 <code>nexhome-memdiag-&lt;时间戳&gt;.json</code>，便于存档对比或提交给他人协助分析。</p>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>13.7 阅读建议</h3></summary>
+                    <summary><h3>13.6 阅读建议</h3></summary>
                     <ul>
-                        <li><b>堆涨而容器内存不涨</b>：多为堆内对象未回收，重点看 GC 次数与堆上限（本镜像按 <code>MaxRAMPercentage=40</code> 限制）。</li>
-                        <li><b>堆不涨但 RSS / 容器内存涨</b>：堆外问题，加载 NMT 明细看 Internal/Other、Thread、Symbol 等类别的增幅。</li>
-                        <li>NIO 直接缓冲接近容量时，考虑代理大文件与并发（镜像已按 <code>MaxDirectMemorySize=64m</code> 封顶，并设 <code>MALLOC_ARENA_MAX=2</code> 限制 glibc arena）。</li>
-                        <li>容器限额建议 <b>≥512MB</b>；频繁 OOM 先看本页确认是堆内还是堆外，再相应调整。</li>
+                        <li><b>Go 堆涨而容器内存不涨</b>：多为堆内对象未回收，重点看 GC 次数/耗时与堆软上限 <code>GOMEMLIMIT</code>（若设置）。</li>
+                        <li><b>堆不涨但 RSS / 容器内存涨</b>：看协程栈与运行时合计（Sys）的增幅，并确认协程数是否异常增长（协程泄漏会持续占用栈内存）。</li>
+                        <li>Go 堆贴近 <code>GOMEMLIMIT</code> 时运行时会加大 GC 力度（CPU 上升）以贴住软限；代理大文件下载走流式转发，磁盘缓存不占内存。</li>
+                        <li>容器限额建议 <b>≥512MB</b>；频繁 OOM 先看本页确认是 Go 堆、协程栈还是运行时其他开销，再相应调整。</li>
                     </ul>
                 </details>
             </section>
@@ -969,7 +962,7 @@
                 <h2>14. 系统设置</h2>
                 <details class="doc-sub-sec" open>
                     <summary><h3>14.1 系统信息</h3></summary>
-                    <p>展示：版本、Java 版本、操作系统、运行时长（小时 + 分钟）、<b>内存占用</b>（<b>系统物理内存</b>，与顶栏监控同源，避免误读为 JVM 堆）与<b>堆内存</b>（JVM 堆已用/上限与百分比）。</p>
+                    <p>展示：版本、<b>Go 运行时</b>（如 <code>go1.27.3</code>）、操作系统、运行时长（小时 + 分钟）、<b>内存占用</b>（<b>系统物理内存</b>，与顶栏监控同源，避免误读为进程内存）与<b>进程内存</b>（进程 RSS / 容器上限或物理内存，带百分比；非 Linux 环境不可读时留空）。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>14.2 访问与安全设置</h3></summary>
@@ -1052,13 +1045,13 @@
       retries: 3
       start_period: 20s</pre>
                     <p>启动：<code>docker compose up -d</code>，然后访问 <code>http://127.0.0.1:8090</code>。</p>
-                    <div class="doc-note warn"><b>healthcheck 切勿用 curl</b>运行镜像基于 eclipse-temurin，<b>不含 curl / wget</b>，用 <code>curl -f</code> 会使容器始终处于 unhealthy。</div>
+                    <div class="doc-note warn"><b>healthcheck 切勿用 curl</b>运行镜像为精简 base（Go 静态二进制），<b>不含 curl / wget</b>，用 <code>curl -f</code> 会使容器始终处于 unhealthy。</div>
                     <p><b>为何用 host 网络</b>：DDNS 需直接读网卡出口 IP、STUN 穿透与 UPnP 需真实网卡、代理要监听 80/443、WOL 需广播。若采用桥接网络，需自行做端口映射且部分能力（广播、UPnP、网卡 IP）会受限。</p>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>15.2 裸机 jar 运行</h3></summary>
-                    <p>需 <b>JDK 25</b>，直接 <code>java -jar nexhome.jar</code>。程序在<b>运行目录</b>（jar 所在目录）自动创建：配置文件 <code>data/nexhome.properties</code>、数据库 <code>data/nexhome.db</code>、证书与上传目录等。初始密码同样打印到控制台。</p>
-                    <p>镜像内置的运行时参数（供裸机部署参考）：<code>MaxRAMPercentage=40</code>（堆按容器限额自动计算，无需固定 -Xmx）、<code>UseSerialGC</code>、<code>Xss512k</code>、<code>MaxMetaspaceSize=128m</code>、<code>ReservedCodeCacheSize=64m</code>、<code>MaxDirectMemorySize=64m</code>（封顶堆外直接内存）、<code>NativeMemoryTracking=summary</code>（供内存诊断页拆分堆外）、环境变量 <code>MALLOC_ARENA_MAX=2</code>（收敛 glibc arena，避免 RSS 涨后不回落）。</p>
+                    <summary><h3>15.2 裸机二进制运行</h3></summary>
+                    <p>产出为<b>单个二进制文件</b>，目标机<b>无需安装任何运行时</b>；有 Go 环境（<b>Go 1.27+</b>）时执行 <code>go build -o nexhome ./cmd/nexhome</code> 后直接 <code>./nexhome</code> 运行。程序在<b>运行目录</b>自动创建：配置文件 <code>data/nexhome.properties</code>、数据库 <code>data/nexhome.db</code>、证书与上传目录等。初始密码同样打印到控制台。</p>
+                    <p>可选环境变量（一般无需设置）：<code>GOMEMLIMIT</code>（Go 堆软上限，建议设为容器限额的一半左右）、<code>GOMAXPROCS</code>（限制可使用的 CPU 核数）；未设置时运行时按 cgroup 限额自动调节。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>15.3 配置文件 nexhome.properties</h3></summary>
@@ -1068,7 +1061,7 @@
                         <tbody>
                         <tr><td><code>server.port</code></td><td>8090</td><td>Web 服务端口。<b>面板「系统设置」中的配置优先于此文件</b>。</td></tr>
                         <tr><td><code>server.port.autoFallback</code></td><td>5</td><td>启动期<b>端口自愈跨度</b>：期望端口被占时向后依次探测 +1…+跨度能否绑定，全部不可用才由内核分配随机端口（保证面板可达、进程不因 restart 反复重启）。配 <b>0</b> 关闭连续探测、直接回退随机端口；负数按 5 处理。</td></tr>
-                        <tr><td><code>server.web.dir</code></td><td>空</td><td>可选：<b>外部前端静态目录</b>（用正斜杠）。配置且目录存在时，静态资源优先从该目录读取而非 jar 内置（开发期改页面不必重新打包）。相对路径基于运行目录解析。</td></tr>
+                        <tr><td><code>server.web.dir</code></td><td>空</td><td>可选：<b>外部前端静态目录</b>（用正斜杠）。配置且目录存在时，静态资源优先从该目录读取而非二进制内置（开发期改页面不必重新打包）。相对路径基于运行目录解析。</td></tr>
                         </tbody>
                     </table>
                 </details>
@@ -1141,7 +1134,7 @@
                         <tr><td>HTTP01 证书申请失败</td><td>域名已解析到本机公网 IP？公网 <b>80</b> 能转发到本服务？否 → 改用 <b>DNS01</b>。</td></tr>
                         <tr><td>DDNS 同步报权限错误</td><td>AccessKey 权限策略是否包含对应产品（云解析 DNS / ESA）的<b>解析读写权限</b>；建议用只授予必要权限的 RAM 子账号。</td></tr>
                         <tr><td>STUN 探测无响应</td><td>更换 STUN 服务器（如 <code>stun.qq.com:3478</code>、<code>stun.miwifi.com:3478</code>），并确认本机可访问公网 <b>UDP</b>。</td></tr>
-                        <tr><td>TCP 任务运行中但外网访问不通</td><td>① 探测 NAT 类型，<b>对称型无法纯 STUN 穿透</b>，改用路由器端口转发；② <b>受限锥形</b>需填「对端公网地址」主动打洞；③ 确认主机防火墙已放行监听端口（Windows：允许 Java 通过专用/公用网络的入站规则）。详见 <a href="#sec-stun">5.10</a>。</td></tr>
+                        <tr><td>TCP 任务运行中但外网访问不通</td><td>① 探测 NAT 类型，<b>对称型无法纯 STUN 穿透</b>，改用路由器端口转发；② <b>受限锥形</b>需填「对端公网地址」主动打洞；③ 确认主机防火墙已放行监听端口（Windows：允许 nexhome 通过专用/公用网络的入站规则）。详见 <a href="#sec-stun">5.10</a>。</td></tr>
                         <tr><td>Docker 模块提示未连接</td><td>缺 <code>-v /var/run/docker.sock:/var/run/docker.sock</code>；报 Permission denied 为容器内用户无 socket 权限；远程模式查 <code>DOCKER_HOST</code> 与 2375 连通性。</td></tr>
                         <tr><td>通知发不出去</td><td>用渠道表单的「<b>试发测试</b>」看具体错误（SMTP 常见为用了登录密码而非<b>授权码</b>、端口与加密方式不匹配；钉钉常见为未填加签 Secret 或关键词拦截）。发送记录与失败原因在「最近发送记录」（最多 10 条）。</td></tr>
                         <tr><td>监控频繁误报 DOWN</td><td>适当调大「超时」（经 VPN/穿透建议 ≥5 秒，实际最少 3 秒生效）与「连续失败告警阈值」；UDP 探测本身为“尽力”，无回包不一定代表不可达。</td></tr>
@@ -1154,9 +1147,9 @@
                     <summary><h3>16.5 内存占得多 / OOM 重启</h3></summary>
                     <ol>
                         <li>先看顶栏与「总览」的内存颜色（≥60% 橙、≥85% 红）确认趋势。</li>
-                        <li>进「<a href="#sec-diag">内存诊断</a>」：堆涨 → 看 GC 与堆上限（默认为容器限额的 40%）；堆不涨但 RSS 涨 → 加载 NMT 明细看堆外类别增幅。</li>
+                        <li>进「<a href="#sec-diag">内存诊断</a>」：Go 堆涨 → 看 GC 次数/耗时与堆软上限（GOMEMLIMIT，若设置）；堆不涨但 RSS 涨 → 看协程栈与运行时合计（Sys）的增幅，确认协程数是否异常增长。</li>
                         <li>结合「分析内存跳变」把跳升时间与 op_log 对齐，定位是哪个动作（代理大文件、批量任务、测速）引起。</li>
-                        <li>适当上调容器内存限额（推荐 <b>≥512MB</b>）；若 NIO 直接缓冲长期贴 64MB 上限，考虑降低代理并发或调高 <code>MaxDirectMemorySize</code>。</li>
+                        <li>适当上调容器内存限额（推荐 <b>≥512MB</b>）；若 Go 堆长期贴住 <code>GOMEMLIMIT</code>（GC 变频繁、CPU 上升），考虑调高容器限额与 GOMEMLIMIT，或降低代理大文件并发。</li>
                     </ol>
                 </details>
                 <details class="doc-sub-sec">

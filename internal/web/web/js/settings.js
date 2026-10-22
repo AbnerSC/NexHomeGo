@@ -12,7 +12,7 @@ async function renderSettings() {
     try { info = await api('GET', '/api/system/info'); } catch (e) { /* ignore */ }
     try { configs = await api('GET', '/api/provider/configs'); } catch (e) { /* ignore */ }
     try { types = await api('GET', '/api/provider/types'); } catch (e) { /* ignore */ }
-    // 系统物理内存：与顶栏监控同源，避免此处显示 JVM 堆内存造成混淆
+    // 系统物理内存：与顶栏监控同源，避免此处显示进程内存造成混淆
     try { metrics = await api('GET', '/api/system/metrics'); } catch (e) { /* ignore */ }
     // 访问与安全配置（端口 / HTTPS / 安全入口）+ 已签发证书清单（HTTPS 证书下拉）
     let ws = {}, certTasks = [];
@@ -22,7 +22,7 @@ async function renderSettings() {
     let sec = { maxFails: 3, lockMinutes: 30 };
     try { sec = await api('GET', '/api/auth/security'); } catch (e) { /* ignore */ }
     const memPct = metrics.memTotalMB > 0 ? Math.round(metrics.memUsedMB * 100 / metrics.memTotalMB) : 0;
-    // JVM 堆内存：来自 /api/system/info，与容器物理内存区分，便于定位堆增长
+    // 进程内存（RSS/上限）：来自 /api/system/info，与系统物理内存区分，便于定位进程增长
     const heapPct = info.maxMemoryMB > 0 ? Math.round(info.usedMemoryMB * 100 / info.maxMemoryMB) : 0;
     const typeName = code => types[code] || code;
     const cfgRows = configs.map(c => `
@@ -41,11 +41,11 @@ async function renderSettings() {
         <h3 style="font-size:14px;margin-bottom:12px">系统信息</h3>
         <table>
           <tr><th style="width:120px">版本</th><td>${esc(info.version || '')}</td></tr>
-          <tr><th>Java 版本</th><td>${esc(info.javaVersion || '')}</td></tr>
+          <tr><th>Go 运行时</th><td>${esc(info.javaVersion || '')}</td></tr>
           <tr><th>操作系统</th><td>${esc(info.os || '')}</td></tr>
           <tr><th>运行时长</th><td>${Math.floor((info.uptimeSec || 0) / 3600)} 小时 ${Math.floor((info.uptimeSec || 0) % 3600 / 60)} 分钟</td></tr>
           <tr><th>内存占用</th><td>${metrics.memUsedMB != null ? `${fmtMB(metrics.memUsedMB)} / ${fmtMB(metrics.memTotalMB)}（${memPct}%）` : ''}</td></tr>
-          <tr><th>堆内存</th><td>${info.maxMemoryMB > 0 ? `${fmtMB(info.usedMemoryMB)} / ${fmtMB(info.maxMemoryMB)}（${heapPct}%）` : ''}</td></tr>
+          <tr><th>进程内存</th><td>${info.maxMemoryMB > 0 ? `${fmtMB(info.usedMemoryMB)} / ${fmtMB(info.maxMemoryMB)}（${heapPct}%）` : ''}</td></tr>
         </table>
       </div>
       <div class="panel">

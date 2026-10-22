@@ -15,10 +15,12 @@ import (
 	"NexHomeGo/internal/core"
 	"NexHomeGo/internal/module/cert"
 	"NexHomeGo/internal/module/ddns"
+	"NexHomeGo/internal/module/docker"
 	"NexHomeGo/internal/module/monitor"
 	"NexHomeGo/internal/module/nav"
 	"NexHomeGo/internal/module/notify"
 	"NexHomeGo/internal/module/provider"
+	"NexHomeGo/internal/module/proxy"
 	"NexHomeGo/internal/module/stun"
 	"NexHomeGo/internal/module/wol"
 	"NexHomeGo/internal/web"
@@ -61,6 +63,14 @@ func main() {
 	ddns.RegisterRoutes()
 	cert.RegisterRoutes() // 含 /.well-known/acme-challenge/{token} 应答路由（免登录）
 	stun.RegisterRoutes()
+	docker.RegisterRoutes()
+	proxy.RegisterRoutes()
+
+	// Dashboard/诊断跨模块数据源注入（解耦：web 包不直接依赖业务模块）
+	web.DockerSummaryProvider = docker.DashboardSummary
+	web.ProxyListeningProvider = proxy.ListeningStatus
+	web.ProxyCacheProvider = proxy.CacheStats
+	cert.SetProxyCertRenewedHook(proxy.OnCertRenewed) // 续期成功后代理证书库热加载
 
 	// 通知钩子接线（解耦：auth/monitor 不直接依赖 notify 包，启动时注入广播入口）
 	monitor.NotifyBroadcast = notify.Broadcast
@@ -79,6 +89,7 @@ func main() {
 	ddns.Init()                            // 加载启用的 DDNS 任务并建立定时同步调度
 	cert.Init()                            // 证书模块：旧库升级列 + 重置中断签发状态 + 每小时自动续期检查
 	stun.Init()                            // 穿透模块：升级列 + 播种服务器 + 流量落库 + 恢复启用的穿透任务
+	proxy.Init()                           // 代理模块：归属地库 + 文件缓存索引 + 访问记录落库，并按开关拉起监听（在 cert.Init 之后，证书清单已就绪）
 	core.Every(60, 3600, core.TruncateOld) // 每小时清理过期日志，保留最近 20000 条
 
 	core.LogInfo(core.LogSys, "NexHome(Go) 启动完成，版本 "+core.Version)
@@ -86,8 +97,9 @@ func main() {
 	// 7) 等待退出信号，优雅关停（顺序对齐 Java NexHomeApp 关停钩子）
 	waitShutdown()
 	core.LogInfo(core.LogSys, "收到退出信号，正在关闭...")
-	// 停止全部穿透任务并释放路由器 UPnP 映射 → 落库最后不足一周期的流量增量 → 关停后台调度任务。
-	// （须在 defer core.CloseDB() 生效前完成，确保 DB 句柄仍可用）
+	// 停止代理监听并冲刷访问记录 → 停止全部穿透任务并释放路由器 UPnP 映射 → 落库最后不足一周期的流量增量 → 关停后台调度任务。
+	// （须在 defer core.CloseDB() 生效前完成，确保 DB 句柄仍可用；顺序对齐 Java 关停钩子）
+	proxy.Shutdown()
 	stun.StopAll()
 	stun.FlushTrafficNow()
 	core.ShutdownTasks()
