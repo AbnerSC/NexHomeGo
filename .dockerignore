@@ -1,0 +1,24 @@
+# 构建上下文排除项：减小上下文体积、避免本地运行产物/开发工具目录进入镜像
+.git
+.gitea
+.github
+.idea
+.workbuddy
+build/
+data/
+testdata/
+_smoke/
+docs/
+logs/
+*.iml
+*.class
+*.exe
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.txt
+*.md
+MIGRATION_PLAN.md
+.dockerignore
+Dockerfile
