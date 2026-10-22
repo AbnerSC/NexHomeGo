@@ -17,7 +17,7 @@
 #   - 支持在 Actions 页面手动触发：选择 release-v 开头的 tag 时
 #     同样推送 版本号 + latest 标签；选择分支时仅推送 latest
 #
-# 推送目标：babyfly/nexhome-go
+# 推送目标：babyfly/nex-home
 #   - 需在仓库 Settings -> Secrets 中配置：
 #       DOCKERHUB_USERNAME  Docker Hub 用户名
 #       DOCKERHUB_TOKEN     Docker Hub 访问令牌（Account Settings -> Security -> New Access Token）
@@ -34,7 +34,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: nexhome-go
+  IMAGE_NAME: nex-home
   IMAGE_USERNAME: babyfly
 
 jobs:

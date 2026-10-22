@@ -44,7 +44,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_NAME: nexhome-go
+  IMAGE_NAME: nex-home
   # 自托管 runner 多在国内，注入 goproxy.cn 模块代理加速依赖下载（置空可关闭）
   # 若 Nexus 建有 go 模块代理仓库（如 repository/go-group），改为对应地址即可
   GOPROXY_URL: https://repo.pi.mmxx.fun/repository/go-public,direct

@@ -1,7 +1,8 @@
 /* ============ 内存诊断模块 ============ */
 /* 实时内存分解 + 时间线曲线 + 内存跳变点与 op_log 时间线的关联分析。
    数据来源：/api/diag/snapshot（采样时间线）、/api/diag/analysis（跳变检测 + 日志关联）。
-   Go 运行时版本：堆/GC/协程由 runtime.MemStats 提供，无 JVM 的 Metaspace/NMT 概念。 */
+   Go 运行时版本：堆/GC/协程由 runtime.MemStats 提供，无 JVM 的 Metaspace/NMT 概念。
+   本页仅展示本系统（进程 RSS + Go 运行时）的内存占用；宿主机整体资源见顶部监控。 */
 'use strict';
 
 let diagAutoRefresh = true;
@@ -25,13 +26,13 @@ function diagBar(label, used, total, text, cls) {
     </tr>`;
 }
 
-/** 生成一条折线的 SVG points（等分 x，按 maxV 归一 y；缺值按 0） */
+/** 生成一条折线的 SVG points（等分 x，按 maxV 归一 y；缺值/不可读负值按 0） */
 function diagSeriesPoints(history, key, maxV, w, h) {
     const n = history.length;
     if (n === 0) return '';
     const step = n > 1 ? w / (n - 1) : 0;
     return history.map((s, i) => {
-        const v = Number(s[key] || 0);
+        const v = Math.max(0, Number(s[key] || 0));
         const y = h - (maxV > 0 ? Math.min(1, v / maxV) * h : 0);
         return `${(i * step).toFixed(1)},${y.toFixed(1)}`;
     }).join(' ');
@@ -44,17 +45,17 @@ function diagTimeShort(t) {
     return p.length > 1 ? p[1] : t;
 }
 
-/** 内存时间线双折线图（容器内存 + Go 堆）：SVG 只画网格线与折线，坐标轴/悬停用 HTML 叠加，
+/** 内存时间线双折线图（进程 RSS + Go 堆）：SVG 只画网格线与折线，坐标轴/悬停用 HTML 叠加，
     规避 preserveAspectRatio="none" 对 SVG 文字的拉伸变形。 */
 function diagChart(history) {
     const W = 900, H = 220;
     let maxV = 1;
     history.forEach(s => {
-        maxV = Math.max(maxV, Number(s.mem || 0), Number(s.heap || 0));
+        maxV = Math.max(maxV, Number(s.rss || 0), Number(s.heap || 0));
     });
     maxV = Math.ceil(maxV * 1.1);
     diagChartState = { history, maxV };
-    const cPts = diagSeriesPoints(history, 'mem', maxV, W, H);
+    const rPts = diagSeriesPoints(history, 'rss', maxV, W, H);
     const hPts = diagSeriesPoints(history, 'heap', maxV, W, H);
     const first = history[0], last = history[history.length - 1];
     const n = history.length;
@@ -76,7 +77,7 @@ function diagChart(history) {
     }
     return `
       <div class="diag-legend">
-        <span><i class="dot" style="background:var(--cyan)"></i>容器内存（当前 ${fmtDiagMB(last?.mem)} / 上限 ${fmtDiagMB(last?.memM)}）</span>
+        <span><i class="dot" style="background:var(--cyan)"></i>进程 RSS（当前 ${fmtDiagMB(last?.rss)}）</span>
         <span><i class="dot" style="background:var(--green)"></i>Go 堆（当前 ${fmtDiagMB(last?.heap)}）</span>
         <span class="muted small">纵轴满刻度 ${fmtDiagMB(maxV)}，共 ${n} 个样本${first ? `，跨度 ${first.time} ~ ${last.time}` : ''}</span>
       </div>
@@ -85,7 +86,7 @@ function diagChart(history) {
         <div class="diag-plot" id="diagPlot">
           <svg class="diag-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
             ${gLines}
-            <polyline fill="none" stroke="var(--cyan)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${cPts}"/>
+            <polyline fill="none" stroke="var(--cyan)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${rPts}"/>
             <polyline fill="none" stroke="var(--green)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${hPts}"/>
           </svg>
           <div class="diag-crosshair" id="diagCross"></div>
@@ -115,7 +116,7 @@ function bindDiagChart() {
         cross.style.display = 'block';
         tip.hidden = false;
         tip.innerHTML = `<div class="t">${esc(s.time || '')}</div>`
-            + `<div><i class="dot" style="background:var(--cyan)"></i>容器内存 ${fmtDiagMB(s.mem)}</div>`
+            + `<div><i class="dot" style="background:var(--cyan)"></i>进程 RSS ${fmtDiagMB(s.rss)}</div>`
             + `<div><i class="dot" style="background:var(--green)"></i>Go 堆 ${fmtDiagMB(s.heap)}</div>`;
         tip.style.left = xPct + '%';
         tip.classList.toggle('flip', xPct > 62); // 靠近右缘时把气泡翻到准线左侧，避免溢出
@@ -158,12 +159,12 @@ async function loadDiag() {
     body.innerHTML = `
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">实时内存分解</h3>
+        <div class="small muted" style="margin:-6px 0 10px">仅统计本系统（进程）内存占用，宿主机整体资源见顶部监控</div>
         <table>
-          ${diagBar('容器内存', s.mem, s.memM, `${fmtDiagMB(s.mem)} / ${fmtDiagMB(s.memM)}`)}
-          ${diagBar('进程 RSS', s.rss, s.memM, `${fmtDiagMB(s.rss)}${s.rss < 0 ? '（非 Linux 不可读）' : ''}`)}
+          ${diagBar('进程 RSS', s.rss, go.containerLimitMB, `${fmtDiagMB(s.rss)}${s.rss < 0 ? '（非 Linux 不可读）' : ''}`)}
           ${diagBar('Go 堆', s.heap, s.heapSys, `${fmtDiagMB(s.heap)} / 已向系统申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`)}
           ${diagBar('协程栈', s.stack, s.sys, fmtDiagMB(s.stack))}
-          ${diagBar('运行时合计（Sys）', s.sys, s.memM, fmtDiagMB(s.sys))}
+          ${diagBar('运行时合计（Sys）', s.sys, s.rss > 0 ? s.rss : 0, fmtDiagMB(s.sys))}
           <tr><th>协程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 协程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
           <tr><th>代理文件缓存</th><td></td><td class="diag-val">${s.cacheN || 0} 项 · ${s.cacheMB < 0 ? '未启用' : fmtDiagMB(s.cacheMB) + '（磁盘）'}</td></tr>
         </table>
@@ -235,7 +236,7 @@ async function renderDiag() {
       <div class="toolbar">
         <label class="small muted">分析指标</label>
         <select id="diagMetric">
-          <option value="container">容器内存（含运行时/RSS）</option>
+          <option value="rss">进程 RSS（含运行时）</option>
           <option value="heap">Go 堆</option>
         </select>
         <button class="btn" onclick="runDiagAnalysis()">分析内存跳变</button>

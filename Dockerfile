@@ -12,8 +12,8 @@
 #
 # 本地手动构建多架构镜像：
 #   docker buildx build --platform linux/amd64,linux/arm64 \
-#     -t nexhome-go:latest --push .
-# 本机单架构调试可直接：docker build -t nexhome-go . && docker run -p 8090:8090 nexhome-go
+#     -t nex-home:latest --push .
+# 本机单架构调试可直接：docker build -t nex-home . && docker run -p 8090:8090 nex-home
 # 国内环境构建可注入 GOPROXY 镜像加速依赖下载：
 #   --build-arg GOPROXY=https://goproxy.cn,direct
 # =====================================================================

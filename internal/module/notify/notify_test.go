@@ -623,3 +623,226 @@ func TestSendEmailArchiveFailureNote(t *testing.T) {
 		t.Errorf("存档失败应降级为结果附注: %q", result)
 	}
 }
+
+// ---------- IMAP：已发送文件夹探测 ----------
+
+// fakeIMAP 极简 IMAP 服务端，按 Dovecot（mailu）的写法回报 LIST：
+// 纯 ASCII 名字不带引号（atom），含空格才加引号，\Sent 直接写在属性列表里。
+// hidden 里的邮箱存在但不在 LIST 出现，用于验证 CREATE 报 already exists 时的兜底。
+type fakeIMAP struct {
+	boxes      []string
+	hidden     []string
+	sent       string
+	denyCreate bool
+}
+
+func startFakeIMAP(t *testing.T, srv fakeIMAP) (host string, port int, appended chan string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, p, _ := net.SplitHostPort(ln.Addr().String())
+	port, _ = strconv.Atoi(p)
+	appended = make(chan string, 4)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	has := func(list []string, v string) bool {
+		for _, x := range list {
+			if x == v {
+				return true
+			}
+		}
+		return false
+	}
+	// listName 模拟 Dovecot：名字可作 atom 就不加引号
+	listName := func(name string) string {
+		for i := 0; i < len(name); i++ {
+			c := name[i]
+			if c <= 0x20 || c >= 0x7f || strings.ContainsRune("(){%*\"\\", rune(c)) {
+				return imapQuote(name)
+			}
+		}
+		return name
+	}
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		w := func(s string) { _, _ = conn.Write([]byte(s)) }
+		r := bufio.NewReader(conn)
+		line := func() string {
+			l, err := r.ReadString('\n')
+			if err != nil {
+				return ""
+			}
+			return strings.TrimRight(l, "\r\n")
+		}
+		w("* OK [CAPABILITY IMAP4rev1 SPECIAL-USE] fake Dovecot ready\r\n")
+		for {
+			tag, cmd, ok := strings.Cut(line(), " ")
+			if !ok {
+				return
+			}
+			upper := strings.ToUpper(cmd)
+			switch {
+			case strings.HasPrefix(upper, "LOGIN "):
+				w(tag + " OK Logged in\r\n")
+			case strings.HasPrefix(upper, "LIST"):
+				for _, b := range srv.boxes {
+					flags := "\\HasNoChildren"
+					if b == srv.sent {
+						flags += " \\Sent"
+					}
+					w("* LIST (" + flags + ") \"/\" " + listName(b) + "\r\n")
+				}
+				w(tag + " OK List completed\r\n")
+			case strings.HasPrefix(upper, "CREATE "):
+				name, _, _ := takeAstring(strings.TrimSpace(cmd[len("CREATE "):]))
+				switch {
+				case srv.denyCreate:
+					w(tag + " NO CREATE failed: Permission denied\r\n")
+				case has(srv.boxes, name) || has(srv.hidden, name):
+					w(tag + " NO [ALREADYEXISTS] Mailbox already exists\r\n")
+				default:
+					srv.boxes = append(srv.boxes, name)
+					w(tag + " OK Create completed\r\n")
+				}
+			case strings.HasPrefix(upper, "SUBSCRIBE"):
+				w(tag + " OK Subscribe completed\r\n")
+			case strings.HasPrefix(upper, "APPEND "):
+				name, tail, _ := takeAstring(strings.TrimSpace(cmd[len("APPEND "):]))
+				n := 0
+				if i := strings.IndexByte(tail, '{'); i >= 0 {
+					if j := strings.IndexByte(tail[i:], '}'); j > 0 {
+						n, _ = strconv.Atoi(tail[i+1 : i+j])
+					}
+				}
+				w("+ Ready for literal data\r\n")
+				if n > 0 {
+					if _, err := io.ReadFull(r, make([]byte, n+2)); err != nil { // 报文 + CRLF
+						return
+					}
+				}
+				appended <- name
+				w(tag + " OK Append completed\r\n")
+			case strings.HasPrefix(upper, "LOGOUT"):
+				w("* BYE\r\n")
+				w(tag + " OK Logout completed\r\n")
+				return
+			default:
+				w(tag + " OK done\r\n")
+			}
+		}
+	}()
+	return h, port, appended
+}
+
+// archiveTo 发起一次 IMAP 存档（imapSsl 关，直连假服务端）。
+func archiveTo(host string, port int, extra map[string]interface{}) string {
+	cfg := map[string]interface{}{
+		"imapHost": host, "imapPort": float64(port), "imapSsl": false,
+	}
+	for k, v := range extra {
+		cfg[k] = v
+	}
+	return archiveToSent(cfg, host, "notify@x.com", "secret", []byte("Subject: t\r\n\r\nbody\r\n"))
+}
+
+// mailu/Dovecot 实测写法：纯字母名字在 LIST 中是无引号 atom，且带 \Sent 标记，
+// 旧实现只认带引号名字，会把已存在的 Sent 判成不存在。
+func TestImapArchiveDovecotUnquotedAtom(t *testing.T) {
+	setupTestDB(t)
+	host, port, appended := startFakeIMAP(t, fakeIMAP{
+		boxes: []string{"INBOX", "Drafts", "Sent", "Trash"}, sent: "Sent",
+	})
+	if result := archiveTo(host, port, nil); result != "已存档至已发送[Sent]" {
+		t.Fatalf("result = %q", result)
+	}
+	if got := <-appended; got != "Sent" {
+		t.Errorf("APPEND 目标 = %q", got)
+	}
+}
+
+// 名字含空格必须带引号（旧实现的 LastIndex(" ") 会把 "Sent Messages" 打成 "Messages\"）。
+func TestImapArchiveQuotedFolderWithSpace(t *testing.T) {
+	setupTestDB(t)
+	host, port, appended := startFakeIMAP(t, fakeIMAP{
+		boxes: []string{"INBOX", "Sent Messages"}, sent: "Sent Messages",
+	})
+	if result := archiveTo(host, port, nil); result != "已存档至已发送[Sent Messages]" {
+		t.Fatalf("result = %q", result)
+	}
+	if got := <-appended; got != "Sent Messages" {
+		t.Errorf("APPEND 目标 = %q", got)
+	}
+}
+
+// 手动指定的中文文件夹名：LIST 回来是 modified UTF-7，需解码后才能与配置值匹配，
+// APPEND 又要用编码后的线上名回发。
+func TestImapArchiveChineseFolderUtf7(t *testing.T) {
+	setupTestDB(t)
+	wire := imapUtf7Encode("已发送")
+	host, port, appended := startFakeIMAP(t, fakeIMAP{boxes: []string{"INBOX", wire}})
+	if result := archiveTo(host, port, map[string]interface{}{"sentFolder": "已发送"}); result != "已存档至已发送[已发送]" {
+		t.Fatalf("result = %q", result)
+	}
+	if got := <-appended; got != wire {
+		t.Errorf("APPEND 目标 = %q，应为线上编码名 %q", got, wire)
+	}
+}
+
+// 服务端确实没有已发送文件夹：自动 CREATE Sent 后再 APPEND。
+func TestImapArchiveCreatesMissingFolder(t *testing.T) {
+	setupTestDB(t)
+	host, port, appended := startFakeIMAP(t, fakeIMAP{boxes: []string{"INBOX"}})
+	if result := archiveTo(host, port, nil); result != "已存档至已发送[Sent]" {
+		t.Fatalf("result = %q", result)
+	}
+	if got := <-appended; got != "Sent" {
+		t.Errorf("APPEND 目标 = %q", got)
+	}
+}
+
+// LIST 漏报但文件夹实际已存在（mailbox_list_index 滱后）：CREATE 回 already exists 不能当失败。
+func TestImapArchiveCreateAlreadyExists(t *testing.T) {
+	setupTestDB(t)
+	host, port, appended := startFakeIMAP(t, fakeIMAP{boxes: []string{"INBOX"}, hidden: []string{"Sent"}})
+	if result := archiveTo(host, port, nil); result != "已存档至已发送[Sent]" {
+		t.Fatalf("result = %q", result)
+	}
+	if got := <-appended; got != "Sent" {
+		t.Errorf("APPEND 目标 = %q", got)
+	}
+}
+
+// 建不了文件夹时把服务器原话带回结果（旧实现只给一句「未探测到」）。
+func TestImapArchiveCreateDenied(t *testing.T) {
+	setupTestDB(t)
+	host, port, _ := startFakeIMAP(t, fakeIMAP{boxes: []string{"INBOX"}, denyCreate: true})
+	result := archiveTo(host, port, nil)
+	if !strings.Contains(result, "Permission denied") || !strings.Contains(result, "请在渠道配置中手动指定文件夹名") {
+		t.Errorf("失败原因应带回服务器响应: %q", result)
+	}
+}
+
+func TestImapUtf7RoundTrip(t *testing.T) {
+	for _, s := range []string{"Sent", "已发送", "已发送邮件", "日本語", "a&b", "Sent/2026"} {
+		if got := imapUtf7Decode(imapUtf7Encode(s)); got != s {
+			t.Errorf("round trip %q = %q", s, got)
+		}
+	}
+	if got := imapUtf7Encode("已发送"); got != "&XfJT0ZAB-" {
+		t.Errorf("已发送 编码 = %q", got)
+	}
+	if got := imapUtf7Decode("&XfJT0ZAB-"); got != "已发送" {
+		t.Errorf("&XfJT0ZAB- 解码 = %q", got)
+	}
+	// 纯 ASCII 名不编码，保留用户手填的 &...- 形式
+	if got := imapEncodeName("&XfJT0ZAB-"); got != "&XfJT0ZAB-" {
+		t.Errorf("imapEncodeName = %q", got)
+	}
+}

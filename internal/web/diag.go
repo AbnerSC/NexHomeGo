@@ -9,13 +9,14 @@ import (
 )
 
 // 内存诊断服务（决策①：按 Go 特性重做）。
-// 轻量周期采样 Go 运行时内存（runtime.MemStats）、进程 RSS、容器/物理内存，构建时间线环形缓冲，
+// 轻量周期采样本进程内存（runtime.MemStats + 进程 RSS），构建时间线环形缓冲，
 // 并联动 op_log 做「内存跳变点 ↔ 日志事件」的时间线关联分析。
+// 本页只反映本系统自身占用；宿主机整体内存由顶栏资源监控（/api/system/metrics）展示。
 //
 // 与 Java DiagService 的差异：
 //   - 去掉 JVM 专有概念（Metaspace/CodeHeap/GC 分代/NMT 原生内存跟踪）；
 //   - 堆/栈/GC/协程数改由 runtime.MemStats、runtime.NumGoroutine 提供；
-//   - 容器内存、RSS 复用 sysinfo.go 的 /proc 读取，非 Linux 环境优雅降级。
+//   - 进程 RSS 复用 sysinfo.go 的 /proc 读取，非 Linux 环境优雅降级。
 //
 // 保持不变的：采样间隔(10s)/环形缓冲容量(1080≈3h)/关联分析日志窗口(120s)/接口路径与响应结构骨架，
 // 以及「内存跳变 ↔ op_log 事件」定位能力。diag.js 随之按新字段渲染。
@@ -61,7 +62,6 @@ func diagSample() {
 	runtime.ReadMemStats(&ms)
 
 	rss := RSSBytes()
-	_, _, memTotalMB, memUsedMB, _, _ := memMetrics()
 
 	var cacheN int
 	var cacheMB float64 = -1
@@ -84,8 +84,6 @@ func diagSample() {
 	s.Set("gcMs", int64(ms.PauseTotalNs/1e6))
 	s.Set("thr", runtime.NumGoroutine())
 	s.Set("rss", bytesToMB(rss))
-	s.Set("mem", memUsedMB)
-	s.Set("memM", memTotalMB)
 	s.Set("cacheN", cacheN)
 	s.Set("cacheMB", cacheMB)
 
@@ -140,7 +138,7 @@ func diagRuntimeInfo() *core.Row {
 // diagAnalysis 关联分析：定位时间线中的最大内存跳变，并取该时刻前后窗口的 op_log 事件。
 func diagAnalysis(metric string) *core.Row {
 	byHeap := metric == "heap"
-	key := "mem"
+	key := "rss"
 	if byHeap {
 		key = "heap"
 	}
@@ -150,8 +148,8 @@ func diagAnalysis(metric string) *core.Row {
 	diagMu.Unlock()
 
 	out := core.NewRow()
-	metricName := "container"
-	metricLabel := "容器内存"
+	metricName := "rss"
+	metricLabel := "进程 RSS"
 	if byHeap {
 		metricName = "heap"
 		metricLabel = "Go 堆"
@@ -209,9 +207,9 @@ func diagAnalysis(metric string) *core.Row {
 	}
 
 	notable, _ := core.Query(
-		"SELECT time, module, message FROM op_log WHERE "+
-			"message LIKE '%缓存已加载%' OR message LIKE '%启动完成%' "+
-			"OR message LIKE '%即将重启%' OR message LIKE '%重启并应用%' "+
+		"SELECT time, module, message FROM op_log WHERE " +
+			"message LIKE '%缓存已加载%' OR message LIKE '%启动完成%' " +
+			"OR message LIKE '%即将重启%' OR message LIKE '%重启并应用%' " +
 			"OR message LIKE '%监听已启动%' ORDER BY id DESC LIMIT 50")
 	out.Set("notable", core.Rows(notable))
 	return out

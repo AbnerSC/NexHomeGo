@@ -65,11 +65,11 @@ type punchLink struct {
 type punch struct {
 	mu sync.Mutex // 等价 Java synchronized（方法级）
 
-	taskName  string
-	stunHost  string
-	stunPort  int
-	srcIp     string
-	onReady   func(*punchLink) // 链路就绪/映射地址变化回调（调用方据此更新权威展示地址与日志）
+	taskName string
+	stunHost string
+	stunPort int
+	srcIp    string
+	onReady  func(*punchLink) // 链路就绪/映射地址变化回调（调用方据此更新权威展示地址与日志）
 
 	current         *punchLink
 	addrPresumed    bool   // 端口保留模式：展示地址语义为「出口IP:本地端口」
@@ -82,8 +82,8 @@ type punch struct {
 	singleTx        map[string]bool
 	// currentKeepalives 当前链路已完成的保活交互次数：为 0 即死亡 = 单事务型服务器特征
 	currentKeepalives int
-	probeServer     string // 最近成功的双链路探测服务器（host:port），重建/重探测时优先复用
-	lastSplitMapped string // 最近一次双链路精确映射地址：独立于链路对象跟踪（链路死亡/关闭后仍保留）
+	probeServer       string // 最近成功的双链路探测服务器（host:port），重建/重探测时优先复用
+	lastSplitMapped   string // 最近一次双链路精确映射地址：独立于链路对象跟踪（链路死亡/关闭后仍保留）
 }
 
 // newPunch 构造链路管理器；读取持久化的单事务黑名单与探测服务器
@@ -238,8 +238,11 @@ func (p *punch) keepaliveOnce() bool {
 }
 
 // installEndpointLink 登记端点链路并按需升级为双链路：曾取得过精确映射（lastSplitMapped 非空）或
-// 端口保留模式下非退避期重探测一次精确映射——成功则升级/维持双链路（映射变化时回调调用方刷新展示），
-// 失败时曾为双链路则保留旧探测值（下轮重探测修正），否则退回端口保留估计展示。
+// 端口保留模式下非退避期重探测一次精确映射——成功则升级/维持双链路，失败时曾为双链路则
+// 保留旧探测值（下轮重探测修正），否则退回端口保留估计展示。
+// 每个成功分支都必须回调 onReady：调用方（运行器）据此恢复「TCP映射已建立」就绪状态。
+// 只在映射地址变化时回调会让链路重建后的就绪标志永久停在 false——外网映射实际可用
+// 却持续报「TCP映射未建立」，这是自检误报 FAIL 的直接来源。
 func (p *punch) installEndpointLink(base *punchLink, localPort int) *punchLink {
 	prevMapped := p.lastSplitMapped
 	var mapped string
@@ -254,9 +257,7 @@ func (p *punch) installEndpointLink(base *punchLink, localPort int) *punchLink {
 		p.addrPresumed = false
 		p.downWarned = false
 		p.currentKeepalives = 0
-		if mapped != prevMapped {
-			p.onReady(split) // 映射变化/升级：更新权威展示地址
-		}
+		p.onReady(split) // 就绪/映射变化：更新权威展示地址
 		return split
 	}
 	if prevMapped != "" {
@@ -267,10 +268,21 @@ func (p *punch) installEndpointLink(base *punchLink, localPort int) *punchLink {
 		p.addrPresumed = false
 		p.downWarned = false
 		p.currentKeepalives = 0
+		p.onReady(split)
 		return split
 	}
+	// 端口保留模式：展示地址语义为「出口IP:本地端口」，回退调用方跟随同端口 UDP STUN 映射修正
 	p.current = base
+	p.addrPresumed = true
+	p.onReady(base)
 	return base
+}
+
+// linkAliveNow 当前链路是否存活（只读探测，不改变链路状态）：供运行器在就绪标志可能滞后时校正。
+func (p *punch) linkAliveNow() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.current != nil && linkAlive(p.current.conn)
 }
 
 // probeMappedOnce 双链路重探测：从同本地端口向 STUN/TCP 服务器新建短连接探测一次精确映射。
@@ -304,7 +316,7 @@ func (p *punch) probeOnce(addr string, localPort int, useSpare bool) string {
 		return ""
 	}
 	defer func() { _ = conn.Close() }() // 交互完成后即弃：单事务型服务器本就活不长，长连接型也不作保活用
-	return bindingOverTcp(conn, 2500) // 连接异常/无响应返回空串
+	return bindingOverTcp(conn, 2500)   // 连接异常/无响应返回空串
 }
 
 // persistProbeServer 持久化最近成功的双链路探测服务器：重启后优先复用
