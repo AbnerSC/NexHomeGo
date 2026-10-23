@@ -313,7 +313,7 @@ func TestEabForAndMakeEAB(t *testing.T) {
 		t.Errorf("非 ZeroSSL 应返回 nil: %v %v", got, err)
 	}
 
-	// makeEAB：三段紧凑序列化，HMAC 可验签，protected 携带 kid/url/nonce
+	// makeEAB：扁平 JSON 序列化（与外部 JWS 一致），HMAC 可验签，protected 携带 kid/url/nonce
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
@@ -328,11 +328,11 @@ func TestEabForAndMakeEAB(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		t.Fatalf("EAB 应为三段: %d", len(parts))
+	parts, err := parseJWS(token)
+	if err != nil {
+		t.Fatalf("EAB 应为扁平 JSON 序列化: %v", err)
 	}
-	pb, err := base64.RawURLEncoding.DecodeString(parts[0])
+	pb, err := base64.RawURLEncoding.DecodeString(parts.Protected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,13 +346,13 @@ func TestEabForAndMakeEAB(t *testing.T) {
 	}
 	rawKey, _ := base64.RawURLEncoding.DecodeString(eab.HMACBase64)
 	mac := hmac.New(sha256.New, rawKey)
-	mac.Write([]byte(parts[0] + "." + parts[1]))
+	mac.Write([]byte(parts.Protected + "." + parts.Payload))
 	wantSig := b64url(mac.Sum(nil))
-	if parts[2] != wantSig {
+	if parts.Signature != wantSig {
 		t.Error("EAB HMAC 签名校验失败")
 	}
 	// 负载就是账号 JWK
-	decodedPayload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	decodedPayload, err := base64.RawURLEncoding.DecodeString(parts.Payload)
 	if err != nil || string(decodedPayload) != c.jwkJSON {
 		t.Error("EAB 负载应为账号公钥 JWK")
 	}

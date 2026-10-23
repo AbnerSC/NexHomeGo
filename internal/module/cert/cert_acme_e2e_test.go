@@ -2,8 +2,10 @@ package cert
 
 import (
 	"crypto"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -43,7 +45,8 @@ type fakeCA struct {
 	certPEM             string
 	newAccountCalls     int
 	failNewOrderProblem string
-	requireEABKid       string // 非空时校验 newAccount 必须携带对应 kid 的 externalAccountBinding
+	requireEABKid       string // 非空时校验 newAccount 必须携带对应 kid 且 HMAC 可验签的 externalAccountBinding
+	eabKey              []byte // requireEABKid 非空时的 EAB HMAC 原始密钥
 	badNonceOnce        bool   // 首个账号请求返回 badNonce，用于验证客户端自动重试
 }
 
@@ -56,10 +59,13 @@ func newFakeCA(t *testing.T) *fakeCA {
 }
 
 // inject 将 LETSENCRYPT 的 directory 指向假服务器（用例结束自动还原）。
-func (f *fakeCA) inject() {
-	old := providerDirs["LETSENCRYPT"]
-	providerDirs["LETSENCRYPT"] = f.srv.URL + "/dir"
-	f.t.Cleanup(func() { providerDirs["LETSENCRYPT"] = old })
+func (f *fakeCA) inject() { f.injectAs("LETSENCRYPT") }
+
+// injectAs 将指定服务商的 directory 指向假服务器（用例结束自动还原）。
+func (f *fakeCA) injectAs(provider string) {
+	old := providerDirs[provider]
+	providerDirs[provider] = f.srv.URL + "/dir"
+	f.t.Cleanup(func() { providerDirs[provider] = old })
 }
 
 func (f *fakeCA) base() string { return f.srv.URL }
@@ -114,8 +120,8 @@ func (f *fakeCA) handle(w http.ResponseWriter, r *http.Request) {
 				EAB string `json:"externalAccountBinding"`
 			}
 			_ = json.Unmarshal(payload, &p)
-			if !strings.HasPrefix(p.EAB, "eyJ") || !strings.Contains(p.EAB, ".") {
-				problem(w, 400, "urn:ietf:params:acme:error:malformed", "missing externalAccountBinding")
+			if err := f.verifyEAB(p.EAB, pub); err != nil {
+				problem(w, 400, "urn:ietf:params:acme:error:malformed", err.Error())
 				return
 			}
 		}
@@ -236,31 +242,85 @@ func (f *fakeCA) handle(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// verifyJWS 校验 JWS 三段：签名（jwk 或已注册 kid 公钥）、url 头匹配、nonce 防重放。
-// nonceBad=true 表示应回 badNonce 类型错误（客户端会自动重试）。
-func (f *fakeCA) verifyJWS(jws, path, wantURL string) (map[string]interface{}, []byte, *rsa.PublicKey, bool, error) {
-	parts := strings.Split(jws, ".")
-	if len(parts) != 3 {
-		return nil, nil, nil, false, fmt.Errorf("not a compact jws")
+// jwsObject JWS 扁平 JSON 序列化（ACME 唯一接受的形式，RFC8555 §6.2）。
+type jwsObject struct {
+	Protected string `json:"protected"`
+	Payload   string `json:"payload"`
+	Signature string `json:"signature"`
+}
+
+// parseJWS 解析 ACME 请求体：紧凑三段式必须被拒绝（真实 CA 只认扁平 JSON）。
+func parseJWS(text string) (jwsObject, error) {
+	var o jwsObject
+	if !strings.HasPrefix(strings.TrimSpace(text), "{") {
+		return o, fmt.Errorf("malformed: JWS 必须是扁平 JSON 序列化")
 	}
-	pb, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err := json.Unmarshal([]byte(text), &o); err != nil {
+		return o, fmt.Errorf("malformed: Parse error reading JWS")
+	}
+	if o.Protected == "" {
+		return o, fmt.Errorf("malformed: The JWS Protected Header MUST be present")
+	}
+	if o.Signature == "" {
+		return o, fmt.Errorf("malformed: The JWS Signature MUST be present")
+	}
+	return o, nil
+}
+
+// verifyEAB 校验 ZeroSSL 外部账号绑定 JWS：HS256、kid/url 匹配、HMAC 可验签、负载为账号公钥 JWK。
+func (f *fakeCA) verifyEAB(text string, acctPub *rsa.PublicKey) error {
+	o, err := parseJWS(text)
 	if err != nil {
-		return nil, nil, nil, false, fmt.Errorf("bad protected b64")
+		return fmt.Errorf("invalid externalAccountBinding: %w", err)
+	}
+	pb, err := base64.RawURLEncoding.DecodeString(o.Protected)
+	if err != nil {
+		return fmt.Errorf("invalid externalAccountBinding: bad protected b64")
 	}
 	var prot map[string]interface{}
 	if err := json.Unmarshal(pb, &prot); err != nil {
-		return nil, nil, nil, false, fmt.Errorf("bad protected json")
+		return fmt.Errorf("invalid externalAccountBinding: bad protected json")
+	}
+	if prot["alg"] != "HS256" || prot["kid"] != f.requireEABKid || prot["url"] != f.base()+"/acct" {
+		return fmt.Errorf("invalid externalAccountBinding: protected %v", prot)
+	}
+	mac := hmac.New(sha256.New, f.eabKey)
+	mac.Write([]byte(o.Protected + "." + o.Payload))
+	if o.Signature != b64url(mac.Sum(nil)) {
+		return fmt.Errorf("invalid externalAccountBinding: HMAC 验签失败")
+	}
+	pay, err := base64.RawURLEncoding.DecodeString(o.Payload)
+	if err != nil || string(pay) != rsaJWK(acctPub) {
+		return fmt.Errorf("invalid externalAccountBinding: 负载必须是账号公钥 JWK")
+	}
+	return nil
+}
+
+// verifyJWS 校验 JWS：签名（jwk 或已注册 kid 公钥）、url 头匹配、nonce 防重放。
+// nonceBad=true 表示应回 badNonce 类型错误（客户端会自动重试）。
+func (f *fakeCA) verifyJWS(jws, path, wantURL string) (map[string]interface{}, []byte, *rsa.PublicKey, bool, error) {
+	o, err := parseJWS(jws)
+	if err != nil {
+		return nil, nil, nil, false, err
+	}
+	pb, err := base64.RawURLEncoding.DecodeString(o.Protected)
+	if err != nil {
+		return nil, nil, nil, false, fmt.Errorf("malformed: bad protected b64")
+	}
+	var prot map[string]interface{}
+	if err := json.Unmarshal(pb, &prot); err != nil {
+		return nil, nil, nil, false, fmt.Errorf("malformed: bad protected json")
 	}
 	var payload []byte
-	if parts[1] != "" {
-		payload, err = base64.RawURLEncoding.DecodeString(parts[1])
+	if o.Payload != "" {
+		payload, err = base64.RawURLEncoding.DecodeString(o.Payload)
 		if err != nil {
-			return nil, nil, nil, false, fmt.Errorf("bad payload b64")
+			return nil, nil, nil, false, fmt.Errorf("malformed: bad payload b64")
 		}
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	sig, err := base64.RawURLEncoding.DecodeString(o.Signature)
 	if err != nil {
-		return nil, nil, nil, false, fmt.Errorf("bad sig b64")
+		return nil, nil, nil, false, fmt.Errorf("malformed: bad sig b64")
 	}
 	if u, _ := prot["url"].(string); u != wantURL {
 		return nil, nil, nil, false, fmt.Errorf("url header mismatch: %s != %s", u, wantURL)
@@ -308,7 +368,7 @@ func (f *fakeCA) verifyJWS(jws, path, wantURL string) (map[string]interface{}, [
 		pub = f.acctPub
 		f.mu.Unlock()
 	}
-	hashed := sha256Sum([]byte(parts[0] + "." + parts[1]))
+	hashed := sha256Sum([]byte(o.Protected + "." + o.Payload))
 	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, hashed, sig); err != nil {
 		return nil, nil, nil, false, fmt.Errorf("signature verify failed: %w", err)
 	}
@@ -574,7 +634,35 @@ func TestAcmeE2eZeroSSLEabRequired(t *testing.T) {
 	}
 }
 
-// TestAcmeJwsNegative 直接验证客户端签名的自洽性：篡改 JWK 文本会使 keyAuthorization 与摘要错位。
+// TestAcmeE2eZeroSSLEabFlow 配置 EAB 凭证后走 ZeroSSL 注册：外部账号绑定 JWS 必须能被 CA 验签。
+func TestAcmeE2eZeroSSLEabFlow(t *testing.T) {
+	setupTestDB(t)
+	f := newFakeCA(t)
+	f.injectAs("ZEROSSL")
+
+	eabKey := []byte("zerossl-hmac-secret")
+	f.requireEABKid = "kid-zerossl"
+	f.eabKey = eabKey
+	if err := core.SetConfig("zerossl.eab_kid", f.requireEABKid); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetConfig("zerossl.eab_hmac", base64.RawURLEncoding.EncodeToString(eabKey)); err != nil {
+		t.Fatal(err)
+	}
+
+	id := insertCertTask(t, "DNS01", "", "")
+	core.Update("UPDATE cert_task SET provider='ZEROSSL' WHERE id=?", id)
+	issue(id, "手动申请")
+	task := getTask(t, id)
+	if got := taskStr(task, "status"); got != "PENDING_VALIDATION" {
+		t.Fatalf("EAB 注册应成功: %q (%s)", got, taskStr(task, "message"))
+	}
+	if f.newAccountCalls != 1 {
+		t.Errorf("注册应发生一次, got %d", f.newAccountCalls)
+	}
+}
+
+// TestAcmeJwsNegative 直接验证客户端签名的自洽性：JWS 必须为扁平 JSON 序列化且 RS256 可验签。
 func TestAcmeJwsNegative(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
@@ -585,11 +673,15 @@ func TestAcmeJwsNegative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(jws, ".")
-	if len(parts) != 3 {
-		t.Fatal("JWS 应三段")
+	// 必须是扁平 JSON（紧凑三段式会被真实 CA 判为 malformed）
+	o, err := parseJWS(jws)
+	if err != nil {
+		t.Fatalf("JWS 不是扁平 JSON 序列化: %v (%s)", err, jws)
 	}
-	pb, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	pb, err := base64.RawURLEncoding.DecodeString(o.Protected)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var prot map[string]interface{}
 	if err := json.Unmarshal(pb, &prot); err != nil {
 		t.Fatal(err)
@@ -601,13 +693,13 @@ func TestAcmeJwsNegative(t *testing.T) {
 		t.Error("kid 为空时应使用 jwk 头")
 	}
 	// 验签（服务端视角）
-	sig, _ := base64.RawURLEncoding.DecodeString(parts[2])
-	hashed := sha256Sum([]byte(parts[0] + "." + parts[1]))
+	sig, _ := base64.RawURLEncoding.DecodeString(o.Signature)
+	hashed := sha256Sum([]byte(o.Protected + "." + o.Payload))
 	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, hashed, sig); err != nil {
 		t.Errorf("签名应可验证: %v", err)
 	}
 	// 篡改后验签必须失败
-	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sha256Sum([]byte(parts[0]+".x")), sig); err == nil {
+	if err := rsa.VerifyPKCS1v15(&key.PublicKey, crypto.SHA256, sha256Sum([]byte(o.Protected+".e31")), sig); err == nil {
 		t.Error("篡改负载后验签应失败")
 	}
 	// kid 模式
@@ -616,7 +708,14 @@ func TestAcmeJwsNegative(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pb2, _ := base64.RawURLEncoding.DecodeString(strings.Split(jws2, ".")[0])
+	o2, err := parseJWS(jws2)
+	if err != nil {
+		t.Fatalf("kid 模式 JWS 解析失败: %v", err)
+	}
+	if o2.Payload != "" {
+		t.Errorf("POST-as-GET 负载应为空串: %q", o2.Payload)
+	}
+	pb2, _ := base64.RawURLEncoding.DecodeString(o2.Protected)
 	if !strings.Contains(string(pb2), `"kid"`) {
 		t.Errorf("kid 模式应携带 kid 头: %s", pb2)
 	}

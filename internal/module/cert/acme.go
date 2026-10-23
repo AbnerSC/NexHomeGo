@@ -264,7 +264,21 @@ func (c *acmeClient) fetchNonce() error {
 	return nil
 }
 
-// signJWS 组装 JWS 紧凑序列化（RS256；jwk/kid 二选一）。
+// flattenedJWS 输出 JWS 扁平 JSON 序列化（RFC7515 §7.2.2）。
+// ACME 只接受该形式（RFC8555 §6.2）：紧凑三段式 "a.b.c" 会被 CA 判为 malformed。
+func flattenedJWS(protected, payload, signature string) (string, error) {
+	obj := core.NewRow().
+		Set("protected", protected).
+		Set("payload", payload).
+		Set("signature", signature)
+	b, err := core.MarshalJSON(obj)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// signJWS 组装 JWS 请求体（RS256；jwk/kid 二选一）。
 func (c *acmeClient) signJWS(url string, payload string) (string, error) {
 	protected := core.NewRow().Set("alg", "RS256")
 	if c.kid == "" {
@@ -277,12 +291,13 @@ func (c *acmeClient) signJWS(url string, payload string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	signingInput := b64url(pText) + "." + b64url([]byte(payload))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, c.key, crypto.SHA256, sha256Sum([]byte(signingInput)))
+	pb := b64url(pText)
+	payb := b64url([]byte(payload))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, c.key, crypto.SHA256, sha256Sum([]byte(pb+"."+payb)))
 	if err != nil {
 		return "", err
 	}
-	return signingInput + "." + b64url(sig), nil
+	return flattenedJWS(pb, payb, b64url(sig))
 }
 
 // marshalPayload 序列化请求负载：nil → 空串（POST-as-GET），string 原样，其余走 JSON。
@@ -392,7 +407,7 @@ func (c *acmeClient) makeEAB(eab eabParams) (string, error) {
 	payb := b64url([]byte(c.jwkJSON))
 	mac := hmac.New(sha256.New, key)
 	mac.Write([]byte(pb + "." + payb))
-	return pb + "." + payb + "." + b64url(mac.Sum(nil)), nil
+	return flattenedJWS(pb, payb, b64url(mac.Sum(nil)))
 }
 
 // ---------- 账号 ----------
