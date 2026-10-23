@@ -13,6 +13,7 @@ package cert
 import (
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/pem"
@@ -148,14 +149,8 @@ func Init() {
 	ensureColumn("provider_config_id", "INTEGER") // 旧库升级：DNS01 自动验证引用凭证配置
 	ensureColumn("save_dir", "TEXT")              // 旧库升级：可选的证书保存目录
 	ensureColumn("webhook_url", "TEXT")           // 旧库升级：可选的证书同步 webhook
-	// 重启恢复：ISSUING 是纯内存的在途状态，进程重启后不会有线程继续。
-	// 若残留说明上次签发被中断（容器重启/异常退出/panic 绕过捕获），置为 ERROR 提示重新申请，
-	// 避免前端永久停留在"正在签发证书..."的假象。
-	stale, err := core.Update("UPDATE cert_task SET status='ERROR', message=? WHERE status='ISSUING'",
-		"上次签发未完成（程序可能已重启或异常退出），请重新点击「申请」")
-	if err == nil && stale > 0 {
-		core.LogWarn(core.LogCert, "已重置 "+fmt.Sprintf("%d", stale)+" 个中断的证书签发任务（ISSUING → ERROR）")
-	}
+	// 重启恢复：ISSUING 是纯内存的在途状态，进程重启后不会有线程继续
+	resetStaleIssuing()
 	// 每小时检查一次证书有效期
 	core.Every(60, 3600, autoRenewCheck)
 	core.LogInfo(core.LogCert, fmt.Sprintf("证书自动续期检查已启动（每小时，到期前 %d 天续期）", renewAheadDays))
@@ -525,9 +520,18 @@ func finalizeAndDownload(taskID int64, task *core.Row, client *acmeClient, order
 		return err
 	}
 	keyPem := pemEncode("PRIVATE KEY", keyDer)
-	if err := os.WriteFile(filepath.Join(dir, "domain.key.pem"), []byte(keyPem), 0o600); err != nil {
+	// 私钥先写临时文件：只有签发成功后才替换正式文件，
+	// 否则续期失败会让新私钥覆盖旧私钥，旧证书随之彻底不可用（本次保底措施的核心）
+	keyTmp := filepath.Join(dir, "domain.key.pem.new")
+	if err := os.WriteFile(keyTmp, []byte(keyPem), 0o600); err != nil {
 		return err
 	}
+	defer func() {
+		// 未提交的临时文件统一清理（成功时已改名，不存在则忽略）
+		for _, name := range []string{"domain.key.pem.new", "cert.pem.new", "fullchain.pem.new"} {
+			_ = os.Remove(filepath.Join(dir, name))
+		}
+	}()
 
 	// 构造 CSR 并提交订单
 	csrDER, err := buildCSR(domainKey, domains)
@@ -556,10 +560,13 @@ func finalizeAndDownload(taskID int64, task *core.Row, client *acmeClient, order
 		return err
 	}
 	certPem := pemEncode("CERTIFICATE", leafDer)
-	if err := os.WriteFile(filepath.Join(dir, "cert.pem"), []byte(certPem), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "cert.pem.new"), []byte(certPem), 0o644); err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "fullchain.pem"), []byte(fullchainPem), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "fullchain.pem.new"), []byte(fullchainPem), 0o644); err != nil {
+		return err
+	}
+	if err := commitCertFiles(dir); err != nil {
 		return err
 	}
 	leaf, err := x509.ParseCertificate(leafDer)
@@ -571,6 +578,7 @@ func finalizeAndDownload(taskID int64, task *core.Row, client *acmeClient, order
 		"证书签发成功", notAfter, dir, taskID); err != nil {
 		return err
 	}
+	_ = core.SetConfig(renewFailKey(taskID), "") // 续期成功：清除失败退避标记
 	core.LogInfo(core.LogCert, "任务["+taskStr(task, "name")+"] 证书签发成功，域名: "+joinDomains(domains)+
 		"，有效期至 "+leaf.NotAfter.Format("2006-01-02 15:04:05"))
 
@@ -583,6 +591,28 @@ func finalizeAndDownload(taskID int64, task *core.Row, client *acmeClient, order
 	// 反向代理中心：热加载证书库，使 SNI 立即用上续期后的新证书
 	if proxyCertRenewed != nil {
 		proxyCertRenewed()
+	}
+	return nil
+}
+
+// commitCertFiles 提交新证书三件套：先校验私钥与证书链是否配对，再同名替换正式文件。
+// 调用前三个 *.new 文件已写入同一目录，rename 为同分区操作，避免出现半套证书。
+func commitCertFiles(dir string) error {
+	keyPEM, err := os.ReadFile(filepath.Join(dir, "domain.key.pem.new"))
+	if err != nil {
+		return err
+	}
+	certPEM, err := os.ReadFile(filepath.Join(dir, "fullchain.pem.new"))
+	if err != nil {
+		return err
+	}
+	if _, err := tls.X509KeyPair(certPEM, keyPEM); err != nil {
+		return fmt.Errorf("新证书与私钥不匹配: %w", err)
+	}
+	for _, name := range []string{"domain.key.pem", "cert.pem", "fullchain.pem"} {
+		if err := os.Rename(filepath.Join(dir, name+".new"), filepath.Join(dir, name)); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -630,6 +660,14 @@ func autoRenewCheck() {
 			return // 与 Java 一致：解析失败中断本轮检查
 		}
 		if notAfter.Before(time.Now().Add(time.Duration(renewAheadDays) * 24 * time.Hour)) {
+			// 退避：上次续期已失败过的任务不每小时重试，避免向 CA 反复申请触发频率限制
+			if at, ok := renewFailAt(taskID(task)); ok {
+				if wait := renewFailBackoff - time.Since(at); wait > 0 {
+					core.LogWarn(core.LogCert, fmt.Sprintf("任务[%s] 上次续期失败(%s)，%s 后再重试",
+						taskStr(task, "name"), at.Format("2006-01-02 15:04:05"), wait.Round(time.Minute)))
+					continue
+				}
+			}
 			core.LogInfo(core.LogCert, "任务["+taskStr(task, "name")+"] 即将到期("+taskStr(task, "not_after")+")，自动续期")
 			issue(taskID(task), "自动续期")
 		}
@@ -990,8 +1028,72 @@ func setStatus(taskID int64, status, message string, notAfter *string) {
 }
 
 func fail(taskID int64, message string) {
+	task, err := mustGet(taskID)
+	if err == nil && usableCert(task) {
+		// 续期失败但旧证书仍有效：不动 not_after / cert_dir / domains 等证书记录，
+		// 只把状态从 ISSUING 恢复为 ISSUED，并在提示字段写明失败原因
+		notAfter := taskStr(task, "not_after")
+		setStatus(taskID, "ISSUED", "申请/续期失败（旧证书仍有效，到期 "+notAfter+"）："+message, nil)
+		_ = core.SetConfig(renewFailKey(taskID), time.Now().Format(time.RFC3339))
+		core.LogWarn(core.LogCert, "任务["+taskStr(task, "name")+"] 申请/续期失败，继续使用旧证书（到期 "+notAfter+"）："+message)
+		return
+	}
 	setStatus(taskID, "ERROR", message, nil)
 	core.LogError(core.LogCert, "任务 #"+fmt.Sprintf("%d", taskID)+": "+message)
+}
+
+// ---------- 续期保底：已有证书不因本次续期失败而失效 ----------
+
+// renewFailBackoff 续期失败后的重试退避窗口：避免每小时反复向 CA 申请触发频率限制。
+const renewFailBackoff = 6 * time.Hour
+
+func renewFailKey(id int64) string { return "cert." + fmt.Sprintf("%d", id) + ".renew_fail_at" }
+
+// renewFailAt 读取上次续期失败时间（退避判断用）。
+func renewFailAt(id int64) (time.Time, bool) {
+	v, err := core.GetConfig(renewFailKey(id))
+	if err != nil {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(v))
+	if err != nil {
+		return time.Time{}, false
+	}
+	return t, true
+}
+
+// usableCert 任务是否仍持有可用旧证书：not_after 未过期且证书文件可解析（与 status 无关）。
+func usableCert(task *core.Row) bool {
+	if task == nil || taskStr(task, "not_after") == "" {
+		return false
+	}
+	na, err := time.Parse(time.RFC3339, taskStr(task, "not_after"))
+	if err != nil || na.Before(time.Now()) {
+		return false
+	}
+	_, err = web.ResolveCertFile(taskID(task))
+	return err == nil
+}
+
+// resetStaleIssuing 重启恢复：ISSUING 是纯内存的在途状态，进程重启后不会有线程继续。
+// 已有可用旧证书的任务恢复为 ISSUED（证书继续对外服务，仅提示本次未完成），
+// 其余置 ERROR 提示重新申请，避免前端永久停留在"正在签发证书..."的假象。
+func resetStaleIssuing() {
+	rows, err := core.Query("SELECT * FROM cert_task WHERE status='ISSUING'")
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	kept := 0
+	for _, t := range rows {
+		if usableCert(t) {
+			setStatus(taskID(t), "ISSUED",
+				"上次签发未完成（程序可能已重启），继续使用旧证书（到期 "+taskStr(t, "not_after")+"）", nil)
+			kept++
+			continue
+		}
+		setStatus(taskID(t), "ERROR", "上次签发未完成（程序可能已重启或异常退出），请重新点击「申请」", nil)
+	}
+	core.LogWarn(core.LogCert, fmt.Sprintf("已重置 %d 个中断的证书签发任务（其中 %d 个保留可用旧证书）", len(rows), kept))
 }
 
 func taskDir(id int64) string {

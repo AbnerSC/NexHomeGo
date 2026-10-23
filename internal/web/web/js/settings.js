@@ -67,7 +67,7 @@ async function renderSettings() {
             </select></div>
           <div class="field" id="accHttpsPort"><label>HTTPS 端口</label>
             <input name="httpsPort" type="number" min="1" max="65535" value="${ws.httpsPort ?? 8443}"></div>
-          <div class="field" id="accRedirect"><label>HTTP 跳转 HTTPS</label>
+          <div class="field" id="accRedirect"><label>HTTP 跳转 HTTPS（选“否”时 HTTP/HTTPS 均可访问）</label>
             <select name="httpsRedirect">
               <option value="0" ${!ws.httpsRedirect ? 'selected' : ''}>否</option>
               <option value="1" ${ws.httpsRedirect ? 'selected' : ''}>是</option>

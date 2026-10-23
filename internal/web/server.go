@@ -122,6 +122,8 @@ func OnCertRenewed(taskID int64) {
 func Start() error {
 	// 先按容器内存上限约束 Go 运行时（GOMEMLIMIT），再起服务，避免堆涨过 mem_limit 被 OOM kill。
 	applyContainerMemoryLimit()
+	// 保底：升级时关闭历史上的 HTTP 强制跳转，保证开启 HTTPS 后面板仍能通过 HTTP 访问
+	MigrateHTTPRedirect()
 	return startInternal(true)
 }
 
@@ -342,7 +344,10 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// HTTPS 强制跳转（仅在明文 HTTP 连接上，且非 ACME）。
-	if currentCfg != nil && currentCfg.HTTPSEnabled && currentCfg.HTTPSRedirect && r.TLS == nil {
+	// 保底：HTTPS 未真正生效（证书解析失败 / 端口被占用而降级）时不跳转，
+	// 否则浏览器会被 302 到不可用的 HTTPS 端口，导致面板完全无法访问。
+	if currentCfg != nil && currentCfg.HTTPSEnabled && currentCfg.HTTPSRedirect &&
+		r.TLS == nil && HTTPSActive() {
 		http.Redirect(w, r, toHTTPSURL(r, currentCfg.HTTPSPort), http.StatusFound)
 		return
 	}

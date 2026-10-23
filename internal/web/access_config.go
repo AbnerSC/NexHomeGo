@@ -176,7 +176,13 @@ func certInfoOf(task *core.Row) (*CertInfo, error) {
 		certFile = filepath.Join(dir, "cert.pem")
 	}
 	if !fileExists(certFile) || !fileExists(keyFile) {
-		return nil, core.NewBadRequest("证书任务 #%d 的证书文件缺失，请重新申请", id)
+		// 副本兜底：任务保存目录（save_dir 为空时用默认 data/ssl）下按域名命名的三件套，
+		// 与反向代理证书库的定位策略一致，避免任务目录丢失后 HTTPS 被迫降级
+		if k, c, ok := savedPair(task); ok {
+			keyFile, certFile = k, c
+		} else {
+			return nil, core.NewBadRequest("证书任务 #%d 的证书文件缺失，请重新申请", id)
+		}
 	}
 	cer, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
@@ -191,6 +197,54 @@ func certInfoOf(task *core.Row) (*CertInfo, error) {
 		NotAfter:  notAfter,
 		TLSConfig: &tls.Config{Certificates: []tls.Certificate{cer}, MinVersion: tls.VersionTLS12},
 	}, nil
+}
+
+// savedPair 保存目录副本定位：{主域名}.key + {主域名}.fullchain.pem|{主域名}.pem（域名去 *. 前缀）。
+func savedPair(task *core.Row) (string, string, bool) {
+	dirs := make([]string, 0, 2)
+	if sd := strings.TrimSpace(str(task.Get("save_dir"))); sd != "" {
+		dirs = append(dirs, sd)
+	}
+	if def := filepath.Join(core.DataDir(), "ssl"); len(dirs) == 0 || dirs[0] != def {
+		dirs = append(dirs, def)
+	}
+	domains := strings.FieldsFunc(str(task.Get("domains")), func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	})
+	for _, dir := range dirs {
+		for _, d := range domains {
+			base := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(d)), "*.")
+			if base == "" {
+				continue
+			}
+			keyFile := filepath.Join(dir, base+".key")
+			certFile := filepath.Join(dir, base+".fullchain.pem")
+			if !fileExists(certFile) {
+				certFile = filepath.Join(dir, base+".pem")
+			}
+			if fileExists(keyFile) && fileExists(certFile) {
+				return keyFile, certFile, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// MigrateHTTPRedirect 保底策略迁移：历史版本可能默认开启「HTTP 强制跳转 HTTPS」，
+// 一旦证书或 HTTPS 端口异常，浏览器就无法从 HTTP 进入面板。
+// 升级时一次性关闭该跳转（仅降级为不跳转，HTTP 与 HTTPS 均可访问），
+// 用户明确需要时可在系统设置页重新开启（之后不会再被重置）。
+func MigrateHTTPRedirect() {
+	const key = "web.https.redirect_migrated"
+	if v, _ := core.GetConfig(key); v == "1" {
+		return
+	}
+	if on, _ := core.GetConfig(KeyHTTPSRedirect); on == "1" {
+		if err := core.SetConfig(KeyHTTPSRedirect, "0"); err == nil {
+			core.LogWarn(core.LogSys, "保底策略：已关闭「HTTP 强制跳转 HTTPS」，HTTP 与 HTTPS 均可访问面板（可在系统设置页重新开启）")
+		}
+	}
+	_ = core.SetConfig(key, "1")
 }
 
 // ApiView 设置页视图：当前配置 + HTTPS 实际生效状态 + 最近一次重启回滚提示。
