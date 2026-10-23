@@ -130,7 +130,9 @@ func ApplyAccessConfig(body map[string]interface{}) (*Snapshot, error) {
 	return snap, nil
 }
 
-// ResolveCertFile 解析 HTTPS 使用的证书：certTaskId>0 用指定任务，否则在未过期已签发证书中挑选有效期最长的一张。
+// ResolveCertFile 解析 HTTPS 使用的证书：certTaskId>0 用指定任务，否则在未过期的证书文件中挑选有效期最长的一张。
+// 不要求任务状态为 ISSUED：续期失败（ERROR）时上次签发的证书仍在有效期内，继续用于 HTTPS，
+// 否则面板会因证书不可解析而被迫降级为仅 HTTP 访问。
 func ResolveCertFile(certTaskID int64) (*CertInfo, error) {
 	if certTaskID > 0 {
 		task, err := core.QueryOne("SELECT * FROM cert_task WHERE id=?", certTaskID)
@@ -142,34 +144,32 @@ func ResolveCertFile(certTaskID int64) (*CertInfo, error) {
 		}
 		return certInfoOf(task)
 	}
-	tasks, err := core.Query("SELECT * FROM cert_task WHERE status='ISSUED' AND not_after IS NOT NULL")
+	tasks, err := core.Query("SELECT * FROM cert_task WHERE not_after IS NOT NULL ORDER BY not_after DESC")
 	if err != nil {
 		return nil, err
 	}
 	now := time.Now()
-	var best *core.Row
-	var bestTime time.Time
 	for _, t := range tasks {
 		na, err := parseInstant(str(t.Get("not_after")))
 		if err != nil || na.Before(now) {
 			continue
 		}
-		if best == nil || na.After(bestTime) {
-			best, bestTime = t, na
+		if info, err := certInfoOf(t); err == nil {
+			return info, nil // 文件缺失/解析失败则尝试下一张
 		}
 	}
-	if best == nil {
-		return nil, core.NewBadRequest("未找到已签发且未过期的证书，请先在「SSL 证书管理」中申请，或指定证书任务")
-	}
-	return certInfoOf(best)
+	return nil, core.NewBadRequest("未找到已签发且未过期的证书，请先在「SSL 证书管理」中申请，或指定证书任务")
 }
 
 func certInfoOf(task *core.Row) (*CertInfo, error) {
 	id := toInt64(task.Get("id"))
-	if str(task.Get("status")) != "ISSUED" {
-		return nil, core.NewBadRequest("证书任务 #%d 尚未签发成功", id)
-	}
 	dir := filepath.Join(core.DataDir(), "certs", "task-"+strconv.FormatInt(id, 10))
+	// 老库迁移后行内 cert_dir 可能指向旧路径：该目录有私钥时以其为准
+	if d := strings.TrimSpace(str(task.Get("cert_dir"))); d != "" {
+		if fileExists(filepath.Join(d, "domain.key.pem")) {
+			dir = d
+		}
+	}
 	keyFile := filepath.Join(dir, "domain.key.pem")
 	certFile := filepath.Join(dir, "fullchain.pem")
 	if !fileExists(certFile) {
