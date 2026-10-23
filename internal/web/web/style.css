@@ -1188,9 +1188,6 @@ code {
 .diag-tip .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
 .diag-legend { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--text); }
 .diag-legend .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
-.diag-dbars { display: flex; align-items: flex-end; gap: 1px; height: 60px; margin-bottom: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); }
-.diag-dbar { flex: 1; min-width: 2px; background: var(--grad-primary); border-radius: 2px 2px 0 0; opacity: .85; }
-.diag-analysis table { margin-bottom: 4px; }
 
 .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 

@@ -15,6 +15,7 @@ import (
 	"NexHomeGo/internal/core"
 	"NexHomeGo/internal/module/cert"
 	"NexHomeGo/internal/module/ddns"
+	"NexHomeGo/internal/module/diag"
 	"NexHomeGo/internal/module/docker"
 	"NexHomeGo/internal/module/monitor"
 	"NexHomeGo/internal/module/nav"
@@ -54,7 +55,6 @@ func main() {
 
 	// 4) 路由注册（须在 Web 启动前；各模块启动前经 web.Route 声明）
 	web.RegisterSystemRoutes()
-	web.RegisterDiagRoutes()
 	wol.RegisterRoutes()
 	nav.RegisterRoutes()
 	provider.RegisterRoutes()
@@ -65,11 +65,11 @@ func main() {
 	stun.RegisterRoutes()
 	docker.RegisterRoutes()
 	proxy.RegisterRoutes()
+	diag.RegisterRoutes() // 内存诊断（独立模块）：实时内存 + 24 小时时间线
 
-	// Dashboard/诊断跨模块数据源注入（解耦：web 包不直接依赖业务模块）
+	// Dashboard 跨模块数据源注入（解耦：web 包不直接依赖业务模块）
 	web.DockerSummaryProvider = docker.DashboardSummary
 	web.ProxyListeningProvider = proxy.ListeningStatus
-	web.ProxyCacheProvider = proxy.CacheStats
 	cert.SetProxyCertRenewedHook(proxy.OnCertRenewed) // 续期成功后代理证书库热加载
 
 	// 通知钩子接线（解耦：auth/monitor 不直接依赖 notify 包，启动时注入广播入口）
@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// 6) 后台周期任务
-	web.InitDiag()
+	diag.Init() // 内存诊断采样（间隔 60 秒，保留最近 24 小时）
 	nav.Init()
 	monitor.Init()                         // 加载启用任务并建立周期探测调度
 	notify.Init()                          // 拉起投递队列 + 定期清理 notify_log

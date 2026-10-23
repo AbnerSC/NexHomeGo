@@ -520,16 +520,6 @@ func ListeningStatus() bool {
 	return boundHttpPort() > 0 || boundHttpsPort() > 0
 }
 
-// CacheStats 供诊断页注入：文件缓存 (条目数, 总字节数)。
-func CacheStats() (entries int, bytes int64) {
-	cacheMu.Lock()
-	defer cacheMu.Unlock()
-	for _, b := range cacheBytes {
-		bytes += b
-	}
-	return len(cacheIndex), bytes
-}
-
 // ---------- 小工具 ----------
 
 func boolCfg(v bool) string {

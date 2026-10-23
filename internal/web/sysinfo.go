@@ -17,7 +17,7 @@ import (
 
 // Go 原生系统信息采集：替代 Java 的 OperatingSystemMXBean / Runtime 内存读数。
 // 生产目标为 Linux 容器，优先读 /proc；本地非 Linux 环境优雅降级（返回 -1 / 0）。
-// 决策①：内存诊断页按 Go 特性重做，这里的采集同时服务于 /api/system/metrics 与 /api/diag/*。
+// 决策①：内存诊断页按 Go 特性重做，这里的 RSSBytes 等采集同时服务于 /api/system/metrics 与内存诊断模块 /api/diag/memory。
 
 var procBase = "/proc"
 
@@ -139,11 +139,7 @@ func readMemInfo() (memInfo, bool) {
 // RSSBytes 进程常驻物理内存（字节）。优先 /proc/self/status 的 VmRSS；不可用返回 -1。
 func RSSBytes() int64 { return procStatusKB("VmRSS:") }
 
-// RSSPeakBytes 进程 RSS 峰值（VmHWM，内核单调记录、不回落，重启后归零）；不可用返回 -1。
-// 与 RSS 一起对照：若峰值远小于容器 cgroup 记账的历史高位，说明两者不是同一个进程。
-func RSSPeakBytes() int64 { return procStatusKB("VmHWM:") }
-
-// procStatusKB 从 /proc/self/status 取以 kB 计的单值字段（如 VmRSS/VmHWM），转为字节。
+// procStatusKB 从 /proc/self/status 取以 kB 计的单值字段（如 VmRSS），转为字节。
 func procStatusKB(field string) int64 {
 	b, err := os.ReadFile(procBase + "/self/status")
 	if err != nil {
@@ -235,24 +231,6 @@ func ContainerMemLimitBytes() int64 {
 		return v
 	}
 	if v, ok := readCgroupInt("/sys/fs/cgroup/memory/memory.limit_in_bytes"); ok {
-		return v
-	}
-	return -1
-}
-
-// ContainerMemUsageBytes 容器 cgroup 当前内存记账值（字节，含可回收 page cache）；
-// 与 docker stats 的 MEM USAGE 同口径，可与进程 RSS 对照。不可读返回 -1。
-func ContainerMemUsageBytes() int64 {
-	if ver, path := cgroupRef(); ver != 0 {
-		if v, ok := readCgroupInt(containerCgroupFile(ver, path, "memory.current", "memory.usage_in_bytes")); ok {
-			return v
-		}
-		return -1
-	}
-	if v, ok := readCgroupInt("/sys/fs/cgroup/memory.current"); ok {
-		return v
-	}
-	if v, ok := readCgroupInt("/sys/fs/cgroup/memory/memory.usage_in_bytes"); ok {
 		return v
 	}
 	return -1

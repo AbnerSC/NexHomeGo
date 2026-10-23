@@ -267,3 +267,23 @@ CREATE TABLE IF NOT EXISTS monitor_task (
     fail_count         INTEGER NOT NULL DEFAULT 0,
     created_at         TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
+
+-- 内存诊断采样表（每 60 秒入库一条，保留 7 天；页面时间线只展示最近 24 小时）
+-- ts      : 采样时刻（Unix 毫秒，范围查询与过期清理的主键，建索引）
+-- time    : 采样时刻（yyyy-MM-dd HH:mm:ss，本地时区，供前端展示）
+-- 内存列均为字节数（-1 表示当前平台不可读，如非 Linux 拿不到 RSS）
+CREATE TABLE IF NOT EXISTS diag_memory (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts       INTEGER NOT NULL,
+    time     TEXT NOT NULL,
+    rss      INTEGER NOT NULL,
+    heap     INTEGER NOT NULL,
+    heap_sys INTEGER NOT NULL,
+    heap_obj INTEGER NOT NULL,
+    stack    INTEGER NOT NULL,
+    sys      INTEGER NOT NULL,
+    thr      INTEGER NOT NULL,
+    gc       INTEGER NOT NULL,
+    gc_ms    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_diag_memory_ts ON diag_memory (ts);
