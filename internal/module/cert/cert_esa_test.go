@@ -42,31 +42,42 @@ func TestEsaHasTxt(t *testing.T) {
 
 func TestWaitTxtPropagated(t *testing.T) {
 	setupTestDB(t)
-	oldLook, oldTimeout, oldInterval := lookTXT, txtPropagateTimeout, txtPropagateInterval
+	oldLook, oldTimeout, oldInterval := lookupTXTFromFunc, txtPropagateTimeout, txtPropagateInterval
 	t.Cleanup(func() {
-		lookTXT, txtPropagateTimeout, txtPropagateInterval = oldLook, oldTimeout, oldInterval
+		lookupTXTFromFunc, txtPropagateTimeout, txtPropagateInterval = oldLook, oldTimeout, oldInterval
 	})
 	txtPropagateTimeout, txtPropagateInterval = 100*time.Millisecond, 5*time.Millisecond
 
 	const name, value = "_acme-challenge.edge.example.com", "digest-a"
 
-	// 1) 查到期望值：立即返回
-	lookTXT = func(string) ([]string, error) { return []string{"digest-old", value}, nil }
+	// 1) 所有 DNS 都能查到期望值：连续确认后通过
+	lookupTXTFromFunc = func(string, string) ([]string, error) { return []string{"digest-old", value}, nil }
 	if err := waitTxtPropagated(name, value); err != nil {
 		t.Fatalf("记录可见应通过: %v", err)
 	}
 
-	// 2) 权威明确无记录：超时后报未生效（此时触发 CA 校验必然 INVALID）
-	lookTXT = func(string) ([]string, error) {
-		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
+	// 2) 权威明确无记录：超时后报未生效（此时触发 CA 校验必然失败）
+	lookupTXTFromFunc = func(_, n string) ([]string, error) {
+		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: n}
 	}
 	if err := waitTxtPropagated(name, value); err == nil {
 		t.Fatal("记录不存在应报未生效")
 	}
 
-	// 3) 探测能力不可用（DNS 不通）：连续失败后放行，不能因此阻断签发
+	// 3) 只有部分节点能查到（CA secondary validation 失败的典型形态）：不能当作生效
+	lookupTXTFromFunc = func(server, _ string) ([]string, error) {
+		if server == publicDNS[0] {
+			return []string{value}, nil
+		}
+		return nil, &net.DNSError{IsNotFound: true, Err: "no such host"}
+	}
+	if err := waitTxtPropagated(name, value); err == nil {
+		t.Fatal("只有部分 DNS 节点可见不应算生效")
+	}
+
+	// 4) 探测能力不可用（DNS 不通）：连续失败后放行，不能因此阻断签发
 	fails := 0
-	lookTXT = func(string) ([]string, error) {
+	lookupTXTFromFunc = func(string, string) ([]string, error) {
 		fails++
 		return nil, errors.New("dial udp 223.5.5.5:53: i/o timeout")
 	}

@@ -235,13 +235,19 @@ func esaListSites(ak, sk string) ([]map[string]interface{}, error) {
 
 // esaCreateRecord 新增 ESA 解析记录，返回 RecordId。
 func esaCreateRecord(ak, sk, siteId, recordName, typ, value string, ttl int) (string, error) {
-	resp, err := esaCall(ak, sk, "POST", "CreateRecord", map[string]string{
+	params := map[string]string{
 		"SiteId":     siteId,
 		"RecordName": recordName,
 		"Type":       esaRecordType(typ),
 		"Data":       esaDataJSON(value),
 		"Ttl":        strconv.Itoa(ttl),
-	})
+	}
+	if strings.EqualFold(typ, "TXT") {
+		// TXT 记录必须关闭代理加速（ESA 仅允许 A/AAAA、CNAME 开启代理），
+		// 显式传 false 避免站点默认策略把记录落到非 DNS 模式导致解析不生效
+		params["Proxied"] = "false"
+	}
+	resp, err := esaCall(ak, sk, "POST", "CreateRecord", params)
 	if err != nil {
 		return "", err
 	}

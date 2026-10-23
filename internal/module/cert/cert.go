@@ -365,7 +365,14 @@ func doIssue(taskID int64, trigger string) error {
 	}
 	if cred != nil {
 		added := []txtRecord{}
-		defer func() { cleanupTxt(cred, added) }() // 验证完成/失败后均清理自动写入的 TXT
+		ok := false
+		defer func() {
+			if ok {
+				cleanupTxt(cred, added) // 签发成功后清理（CA 已缓存验证结果，删除不影响签发）
+				return
+			}
+			keepTxtForDiagnosis(name, added)
+		}()
 		for _, authURL := range order.Authorizations {
 			a, err := client.fetchAuth(authURL)
 			if err != nil {
@@ -395,11 +402,17 @@ func doIssue(taskID int64, trigger string) error {
 			}
 			core.LogInfo(core.LogCert, "任务["+name+"] dns-01 已自动写入"+txt.channelName()+
 				" TXT: _acme-challenge."+domain+record+"，公网已生效")
+			setStatus(taskID, "ISSUING", "已写入"+txt.channelName()+" TXT(_acme-challenge."+domain+
+				")，正在等待 CA 校验...", nil)
 		}
 		if err := waitAuthorizations(client, order, 180*time.Second); err != nil {
 			return err
 		}
-		return finalizeAndDownload(taskID, task, client, order, domains)
+		if err := finalizeAndDownload(taskID, task, client, order, domains); err != nil {
+			return err
+		}
+		ok = true
+		return nil
 	}
 
 	var hint strings.Builder
@@ -901,6 +914,14 @@ func esaApplyTxt(cred *dnsCred, domain, value string) (txtRecord, error) {
 	if err != nil {
 		return txtRecord{}, errors.New("ESA 写入 TXT 失败" + siteHint + ": " + err.Error())
 	}
+	// 回查：CreateRecord 返回成功不等于记录真的落在站点上（站点配置中、权限/参数被静默忽略等），
+	// 回查不到时尽早暴露，避免到 CA 校验阶段才报一个没头绪的 INVALID。
+	if recs, err := ddns.EsaListRecords(cred.ak, cred.sk, cred.esaSiteId, fullName); err != nil {
+		core.LogWarn(core.LogCert, "ESA 创建 TXT 后回查失败("+fullName+" RecordId="+id+"): "+err.Error())
+	} else if !esaHasTxt(recs, fullName, value) {
+		core.LogWarn(core.LogCert, "ESA 返回创建成功但站点记录列表中未找到 TXT("+fullName+
+			" RecordId="+id+")，记录可能仍在下发，或该站点不允许 TXT 记录")
+	}
 	return txtRecord{channel: "ESA", recordId: id}, nil
 }
 
@@ -921,82 +942,120 @@ func esaHasTxt(records []map[string]interface{}, fullName, value string) bool {
 // publicDNS 生效探测使用的公共 DNS（依次尝试；声明为变量便于单测注入）。
 var publicDNS = []string{"223.5.5.5:53", "119.29.29.29:53", "8.8.8.8:53"}
 
-// txtPropagateTimeout / txtPropagateInterval 生效等待上限与轮询间隔；lookTXT 为探测器。
-// 均声明为变量以便单测替换。
+// txtPropagateTimeout / txtPropagateInterval 生效等待上限与轮询间隔；
+// txtPropagateConfirm 连续确认次数：多台 DNS 全部命中要稳定两轮才算生效，
+// 避免记录刚落地时只有一个节点能看到。均为变量以便单测替换。
 var (
-	txtPropagateTimeout  = 90 * time.Second
-	txtPropagateInterval = 3 * time.Second
-	lookTXT              = lookupPublicTXT
+	txtPropagateTimeout  = 120 * time.Second
+	txtPropagateInterval = 5 * time.Second
+	txtPropagateConfirm  = 2
+	lookupTXTFromFunc    = lookupTXTFrom
 )
 
-// waitTxtPropagated 轮询公共 DNS 等待 TXT 记录生效（未生效就去触发 CA 校验必然 INVALID）。
+// waitTxtPropagated 等待 TXT 记录在所有公共 DNS 上可见，未生效就去触发 CA 校验必然失败。
+// 要求全部能应答的 DNS 都命中：CA 的 secondary validation 会从多个视角查询，
+// 只有部分节点同步时就会报 “During secondary validation: No TXT record found”。
 // 探测能力不可用（容器无外网 UDP 53、DNS 全部超时）时记日志放行，
 // 不能因为本机探测不了就阻断签发。
 func waitTxtPropagated(name, value string) error {
 	deadline := time.Now().Add(txtPropagateTimeout)
-	answered, probeFails := false, 0
+	probeFails, confirm := 0, 0
 	for {
-		vals, err := lookTXT(name)
+		answered, hits, notFound, err, summary := probeTXT(name, value)
 		switch {
-		case err == nil:
-			answered, probeFails = true, 0
-			for _, v := range vals {
-				if strings.TrimSpace(v) == value {
-					return nil
-				}
+		case answered > 0 && hits == answered:
+			probeFails = 0
+			confirm++
+			if confirm >= txtPropagateConfirm {
+				return nil
 			}
-		case isDNENotFound(err):
-			answered, probeFails = true, 0
-		default:
+		case answered == 0 && !notFound && err != nil:
+			// 一台都问不通：探测能力缺失，不能当作“记录未生效”
+			confirm = 0
 			probeFails++
-			if probeFails >= 2 && !answered {
+			if probeFails >= 2 {
 				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态("+err.Error()+")，跳过生效检查")
 				return nil
 			}
+		default:
+			confirm = 0 // 至少有一台看不到（或缓存了 NXDOMAIN）：继续等
+			probeFails = 0
 		}
 		if time.Now().After(deadline) {
-			if !answered {
+			if answered == 0 && !notFound {
 				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态，跳过生效检查")
 				return nil
 			}
-			return fmt.Errorf("%s 未查询到预期 TXT 值（已等待 %s）", name, txtPropagateTimeout)
+			core.LogWarn(core.LogCert, "TXT 生效检查未通过("+name+")："+summary)
+			return fmt.Errorf("已等待 %s，部分 DNS 节点查不到该 TXT（%s）", txtPropagateTimeout, summary)
 		}
 		time.Sleep(txtPropagateInterval)
 	}
 }
 
-// lookupPublicTXT 逐个公共 DNS 查询 TXT 记录，任一返回即采用；单台报“无记录”时继续问下一台
-// （各递归的 NXDOMAIN 负缓存相互独立，只凭一台定论容易误判为未生效）。
-func lookupPublicTXT(name string) ([]string, error) {
-	var lastErr error
-	notFound := 0
+// probeTXT 向每台公共 DNS 各查一次，返回给出明确答案（含“无此记录”）的台数与其中命中期望值的台数，
+// 以及逐台探测结果（超时/不可达的服务器不计入 answered，避免网络限制把结果误判成“记录不一致”）。
+func probeTXT(name, value string) (answered, hits int, notFound bool, lastErr error, summary string) {
+	details := make([]string, 0, len(publicDNS))
 	for _, server := range publicDNS {
-		srv := server
-		r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			d := net.Dialer{Timeout: 5 * time.Second}
-			return d.DialContext(ctx, "udp", srv)
-		}}
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		vals, err := r.LookupTXT(ctx, name)
-		cancel()
-		if err == nil {
-			return vals, nil
+		vals, err := lookupTXTFromFunc(server, name)
+		if err != nil {
+			if isDNENotFound(err) {
+				notFound = true
+				answered++
+				details = append(details, server+"=无记录")
+			} else {
+				lastErr = err
+				details = append(details, server+"=查询失败")
+			}
+			continue
 		}
-		lastErr = err
-		if isDNENotFound(err) {
-			notFound++
+		answered++
+		matched := false
+		for _, v := range vals {
+			if strings.TrimSpace(v) == value {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			hits++
+			details = append(details, server+"=命中")
+		} else {
+			details = append(details, server+"=值不符")
 		}
 	}
-	if notFound == len(publicDNS) {
-		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
-	}
-	return nil, lastErr
+	return answered, hits, notFound, lastErr, strings.Join(details, ", ")
+}
+
+// lookupTXTFrom 向指定 DNS 服务器查询 TXT（PreferGo 直接发 UDP，不走系统解析器的本地缓存）。
+func lookupTXTFrom(server, name string) ([]string, error) {
+	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		d := net.Dialer{Timeout: 5 * time.Second}
+		return d.DialContext(ctx, "udp", server)
+	}}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return r.LookupTXT(ctx, name)
 }
 
 // isDNENotFound 是否为权威返回的“记录不存在”（区别于超时/网络不可达）。
 func isDNENotFound(err error) bool {
 	var de *net.DNSError
 	return errors.As(err, &de) && de.IsNotFound
+}
+
+// keepTxtForDiagnosis 验证未通过时保留自动写入的 TXT，不删除：
+// CA 报“未找到记录”时，用户可在控制台直接看到本条 TXT 是否存在、值是否正确、记录名是否对，
+// 也能用公共 DNS 查询工具验证是否对外生效；确认后可手动删除。
+func keepTxtForDiagnosis(taskName string, added []txtRecord) {
+	for _, t := range added {
+		if t.recordId == "" {
+			continue // 复用的已有记录，本来就不归本程序删除
+		}
+		core.LogWarn(core.LogCert, "任务["+taskName+"] 验证未通过，已保留自动写入的 "+t.channelName()+
+			" TXT 记录(RecordId="+t.recordId+") 便于核对，确认后可手动删除")
+	}
 }
 
 // cleanupTxt 验证结束后清理自动写入的 TXT 记录（CA 已缓存验证结果，删除不影响签发；失败仅记日志）。
