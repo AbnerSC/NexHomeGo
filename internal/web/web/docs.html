@@ -919,7 +919,8 @@
                     <table>
                         <thead><tr><th style="width:180px">指标</th><th>含义与参考上限</th></tr></thead>
                         <tbody>
-                        <tr><td>进程 RSS</td><td>本进程常驻物理内存，进度条参考上限为容器内存限制（无限制或不可读时只显示数值）；<b>非 Linux 环境不可读</b>时显示「（非 Linux 不可读）」。</td></tr>
+                        <tr><td>进程 RSS</td><td>本进程常驻物理内存（<code>/proc/self/status</code> 的 VmRSS），进度条按自身归一，作为下面各项构成对比的分母；<b>非 Linux 环境不可读</b>时显示「（非 Linux 不可读）」。与容器硬限的比值看下一行。</td></tr>
+                        <tr><td>容器上限</td><td>取 cgroup 内存限制（v2 <code>memory.max</code> / v1 <code>memory.limit_in_bytes</code>），显示「进程 RSS / 上限」及占比；<b>无限制或不可读时不显示该行</b>。此处才是内存硬限，容器内看到的 <code>/proc/meminfo</code>（如 38.9 GB）是<b>宿主机</b>口径，两者不可直接比较。</td></tr>
                         <tr><td>Go 堆</td><td>已用 / 已向系统申请（HeapSys）/ 存活对象个数三个值。</td></tr>
                         <tr><td>协程栈</td><td>全部协程（goroutine）的栈内存合计，进度条参考上限按运行时合计 Sys 绘制。</td></tr>
                         <tr><td>运行时合计（Sys）</td><td>Go 运行时已向系统申请的总内存（堆 + 栈 + GC 元数据等），进度条参考上限按进程 RSS 绘制。</td></tr>

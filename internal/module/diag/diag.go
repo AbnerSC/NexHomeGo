@@ -35,6 +35,7 @@ func RegisterRoutes() {
 // Init 启动周期采样：立即采一次保证进页面即有数据，之后每 60 秒入库；
 // 每小时清理超过 7 天的历史样本（另在启动时先清一次）。
 func Init() {
+	migrateUnitScale()
 	prune()
 	sample()
 	core.Every(intervalSec, intervalSec, sample)
@@ -74,6 +75,29 @@ func readMem() memSample {
 		gc:      int64(ms.NumGC),
 		gcMs:    int64(ms.PauseTotalNs / 1e6),
 	}
+}
+
+// unitFixKey app_config 中的口径修复标记（见 migrateUnitScale）。
+const unitFixKey = "diag.memUnitFix"
+
+// migrateUnitScale 一次性清理「旧口径」历史样本：
+// 早期版本 bytesToMB 用 104857.6 作除数（正确的 1 MB = 1048576 字节的 1/10），
+// 使所有入库字节数被放大 10 倍再显示；这些样本与修复后的样本混绘会出现 10 倍断层，
+// 且单位错值无法反查真值精度，故首次升级时清空一次，由新采样重建时间线。
+func migrateUnitScale() {
+	if v, _ := core.GetConfig(unitFixKey); v == "2" {
+		return
+	}
+	n, err := core.Update("DELETE FROM diag_memory")
+	if err != nil {
+		core.LogError(core.LogSys, "内存诊断旧口径样本清理失败: "+err.Error())
+		return
+	}
+	if err := core.SetConfig(unitFixKey, "2"); err != nil {
+		core.LogError(core.LogSys, "内存诊断口径标记写入失败: "+err.Error())
+		return
+	}
+	core.LogInfo(core.LogSys, fmt.Sprintf("内存诊断 MB 口径已修正为 1 MB = 1048576 字节，清理旧口径样本 %d 条", n))
 }
 
 // sample 采集一次并入库。
@@ -153,6 +177,8 @@ func liveRow(s memSample) *core.Row {
 	r.Set("thr", s.thr)
 	r.Set("gc", s.gc)
 	r.Set("gcMs", s.gcMs)
+	// memLimit：容器内存上限（MB，cgroup 读不到或无限制为 -1），供页面把进程 RSS 与硬限并列对照。
+	r.Set("memLimit", bytesToMB(web.ContainerMemLimitBytes()))
 	return r
 }
 
@@ -186,11 +212,14 @@ func procAvailable() bool {
 	return err == nil
 }
 
+// bytesToMB 字节 -> MB。1 MB = 1024*1024 = 1048576 字节，必须与 /proc 的 kB、
+// 系统设置页 processMemoryMB 的 rss/1024/1024 保持同一口径，否则读数会被放大 10 倍
+// （历史缺陷：除数写成 104857.6，导致进程 RSS 显示值超过容器内存上限）。
 func bytesToMB(b int64) float64 {
 	if b < 0 {
 		return -1
 	}
-	return round1(float64(b) / 104857.6)
+	return round1(float64(b) / 1048576)
 }
 
 func round1(v float64) float64 {

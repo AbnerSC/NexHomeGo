@@ -133,6 +133,7 @@ function bindDiagChart() {
 /** 实时内存分解：进程 RSS 为进程视角（含共享页与未归还页），堆/栈/运行时为其构成参考 */
 function diagLive(s, rt) {
     const rss = Number(s.rss) > 0 ? Number(s.rss) : 0; // 作为堆/栈/运行时的分母（进程总占用视角）
+    const lim = Number(s.memLimit); // 容器内存上限（MB），cgroup 不可读/无限制时为负
     const up = rt.uptimeSec || 0;
     const upTxt = `${Math.floor(up / 3600)}h${Math.floor(up % 3600 / 60)}m`;
     return `
@@ -140,6 +141,7 @@ function diagLive(s, rt) {
         <h3 style="font-size:14px;margin-bottom:12px">当前实时内存</h3>
         <table>
           ${diagBar('进程 RSS', rss, rss, fmtDiagMB(s.rss) + (s.rss < 0 ? '（非 Linux 不可读）' : '（进程总占用）'))}
+          ${lim > 0 ? diagBar('容器上限', rss, lim, `${fmtDiagMB(s.rss)} / ${fmtDiagMB(lim)}`) : ''}
           ${diagBar('Go 堆', s.heap, rss, `${fmtDiagMB(s.heap)} / 已申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`)}
           ${diagBar('协程栈', s.stack, rss, fmtDiagMB(s.stack))}
           ${diagBar('运行时合计（Sys）', s.sys, rss, fmtDiagMB(s.sys))}

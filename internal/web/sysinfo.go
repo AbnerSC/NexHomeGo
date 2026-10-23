@@ -375,11 +375,14 @@ func sign(v float64) float64 {
 	return 1
 }
 
+// bytesToMB 字节 -> MB（1 MB = 1024*1024 = 1048576 字节）。
+// 除数必须与 /proc 的 kB 以及 processMemoryMB 的 rss/1024/1024 一致，
+// 否则日志里的 cgroup 上限 / RSS 会被放大 10 倍。
 func bytesToMB(b int64) float64 {
 	if b < 0 {
 		return -1
 	}
-	return round1(float64(b) / 104857.6)
+	return round1(float64(b) / 1048576)
 }
 
 func kbToMB(kb uint64) float64 { return round1(float64(kb) / 1024.0) }
