@@ -42,18 +42,24 @@ func TestEsaHasTxt(t *testing.T) {
 
 func TestWaitTxtPropagated(t *testing.T) {
 	setupTestDB(t)
-	oldLook, oldTimeout, oldInterval := lookupTXTFromFunc, txtPropagateTimeout, txtPropagateInterval
+	oldLook, oldZone := lookupTXTFromFunc, zoneNSFunc
+	oldTimeout, oldInterval, oldSettle := txtPropagateTimeout, txtPropagateInterval, txtPropagateSettle
 	t.Cleanup(func() {
-		lookupTXTFromFunc, txtPropagateTimeout, txtPropagateInterval = oldLook, oldTimeout, oldInterval
+		lookupTXTFromFunc, zoneNSFunc = oldLook, oldZone
+		txtPropagateTimeout, txtPropagateInterval, txtPropagateSettle = oldTimeout, oldInterval, oldSettle
 	})
-	txtPropagateTimeout, txtPropagateInterval = 100*time.Millisecond, 5*time.Millisecond
+	txtPropagateSettle = 0 // 静默期在单测里无意义，避免每条用例白等 10s
+	txtPropagateTimeout, txtPropagateInterval = 120*time.Millisecond, 5*time.Millisecond
 
 	const name, value = "_acme-challenge.edge.example.com", "digest-a"
+	auth := &zoneAuth{zone: "example.com", hosts: []string{"ns1.example.com", "ns2.example.com"},
+		servers: []string{"1.1.1.1:53", "2.2.2.2:53"}}
+	zoneNSFunc = func(string) (*zoneAuth, error) { return auth, nil }
 
-	// 1) 所有 DNS 都能查到期望值：连续确认后通过
+	// 1) 全部权威都返回期望值：连续确认后通过
 	lookupTXTFromFunc = func(string, string) ([]string, error) { return []string{"digest-old", value}, nil }
 	if err := waitTxtPropagated(name, value); err != nil {
-		t.Fatalf("记录可见应通过: %v", err)
+		t.Fatalf("权威全部命中应通过: %v", err)
 	}
 
 	// 2) 权威明确无记录：超时后报未生效（此时触发 CA 校验必然失败）
@@ -61,31 +67,38 @@ func TestWaitTxtPropagated(t *testing.T) {
 		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: n}
 	}
 	if err := waitTxtPropagated(name, value); err == nil {
-		t.Fatal("记录不存在应报未生效")
+		t.Fatal("权威无记录应报未生效")
 	}
 
-	// 3) 只有部分节点能查到（CA secondary validation 失败的典型形态）：不能当作生效
+	// 3) 只有部分权威节点能看到（secondary validation 失败的典型形态）：不能算生效
 	lookupTXTFromFunc = func(server, _ string) ([]string, error) {
-		if server == publicDNS[0] {
+		if server == auth.servers[0] {
 			return []string{value}, nil
 		}
 		return nil, &net.DNSError{IsNotFound: true, Err: "no such host"}
 	}
 	if err := waitTxtPropagated(name, value); err == nil {
-		t.Fatal("只有部分 DNS 节点可见不应算生效")
+		t.Fatal("只有部分权威节点可见不应算生效")
 	}
 
 	// 4) 探测能力不可用（DNS 不通）：连续失败后放行，不能因此阻断签发
 	fails := 0
 	lookupTXTFromFunc = func(string, string) ([]string, error) {
 		fails++
-		return nil, errors.New("dial udp 223.5.5.5:53: i/o timeout")
+		return nil, errors.New("dial udp 1.1.1.1:53: i/o timeout")
 	}
 	if err := waitTxtPropagated(name, value); err != nil {
 		t.Fatalf("探测不可用应放行: %v", err)
 	}
 	if fails < 2 {
 		t.Fatalf("应连续探测失败后才放行, fails=%d", fails)
+	}
+
+	// 5) 拿不到权威清单时退回公共递归：递归命中即放行
+	zoneNSFunc = func(string) (*zoneAuth, error) { return nil, errors.New("no ns") }
+	lookupTXTFromFunc = func(string, string) ([]string, error) { return []string{value}, nil }
+	if err := waitTxtPropagated(name, value); err != nil {
+		t.Fatalf("权威不可用时递归命中应放行: %v", err)
 	}
 }
 

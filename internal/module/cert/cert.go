@@ -365,6 +365,7 @@ func doIssue(taskID int64, trigger string) error {
 	}
 	if cred != nil {
 		added := []txtRecord{}
+		applied := map[string]string{} // 域名 -> 本次写入的 TXT 值（失败时回查权威状态用）
 		ok := false
 		defer func() {
 			if ok {
@@ -393,6 +394,7 @@ func doIssue(taskID int64, trigger string) error {
 				return err
 			}
 			added = append(added, txt)
+			applied[domain] = digest
 			if err := client.triggerChallenge(ch.URL); err != nil {
 				return err
 			}
@@ -406,6 +408,12 @@ func doIssue(taskID int64, trigger string) error {
 				")，正在等待 CA 校验...", nil)
 		}
 		if err := waitAuthorizations(client, order, 180*time.Second); err != nil {
+			// 校验失败时回查权威当前状态：能直接区分“记录被删/写错名”与“下发太慢还没生效”，
+			// 这两种情况后续处置完全不同。
+			for domain, digest := range applied {
+				_, detail, _ := propagationState("_acme-challenge."+domain, digest)
+				core.LogWarn(core.LogCert, "任务["+name+"] 校验失败时权威解析状态 _acme-challenge."+domain+"："+detail)
+			}
 			return err
 		}
 		if err := finalizeAndDownload(taskID, task, client, order, domains); err != nil {
@@ -939,104 +947,263 @@ func esaHasTxt(records []map[string]interface{}, fullName, value string) bool {
 	return false
 }
 
-// publicDNS 生效探测使用的公共 DNS（依次尝试；声明为变量便于单测注入）。
-var publicDNS = []string{"223.5.5.5:53", "119.29.29.29:53", "8.8.8.8:53"}
+// publicDNS 公共递归 DNS：只用于查权威 NS 清单，以及直查权威不可用时的兜底探测。
+// 不拿它当主判据——递归会缓存 NXDOMAIN（本域名 SOA 负缓存 300s），
+// 探测本身就会把“查不到”灌进缓存，反过来制造记录没生效的假象。
+var publicDNS = []string{"8.8.8.8:53", "223.5.5.5:53", "119.29.29.29:53"}
 
-// txtPropagateTimeout / txtPropagateInterval 生效等待上限与轮询间隔；
-// txtPropagateConfirm 连续确认次数：多台 DNS 全部命中要稳定两轮才算生效，
-// 避免记录刚落地时只有一个节点能看到。均为变量以便单测替换。
+// txtPropagate* 生效等待参数：settle 为写入后先静默的时间（给 ESA 控制面下发留出首轮时间，
+// 减少无效查询）；timeout 为最长等待（ESA 记录同步到全部权威节点通常要 1~3 分钟，偶发更久）；
+// interval 为轮询间隔；confirm 为连续确认轮数；minHits 为递归兜底时至少命中的台数。
+// 均为变量以便单测替换。
 var (
-	txtPropagateTimeout  = 120 * time.Second
+	txtPropagateSettle   = 10 * time.Second
+	txtPropagateTimeout  = 420 * time.Second
 	txtPropagateInterval = 5 * time.Second
+	txtPropagateMinHits  = 1
 	txtPropagateConfirm  = 2
 	lookupTXTFromFunc    = lookupTXTFrom
+	zoneNSFunc           = zoneNameservers
 )
 
-// waitTxtPropagated 等待 TXT 记录在所有公共 DNS 上可见，未生效就去触发 CA 校验必然失败。
-// 要求全部能应答的 DNS 都命中：CA 的 secondary validation 会从多个视角查询，
-// 只有部分节点同步时就会报 “During secondary validation: No TXT record found”。
-// 探测能力不可用（容器无外网 UDP 53、DNS 全部超时）时记日志放行，
-// 不能因为本机探测不了就阻断签发。
+// zoneAuth 域名所在区的权威信息：zone 区名，hosts NS 主机名（诊断用），servers 可直连的 ip:53。
+type zoneAuth struct {
+	zone    string
+	hosts   []string
+	servers []string
+}
+
+// waitTxtPropagated 等待 TXT 记录在全部权威 NS 上可见；未生效就去触发 CA 校验必然报“找不到记录”。
+// 判据选权威而不是公共递归：CA（尤其 secondary validation）是从多个视角直接问权威的，
+// 只要还有权威节点没同步就会失败；而权威服务器不做缓存，直查得到的答案既准确，
+// 又不会像递归那样把 NXDOMAIN 缓存住、反过来误导我们自己的判定。
+// 探测能力不可用（拿不到 NS 清单、容器无外网 UDP 53）时记日志放行。
 func waitTxtPropagated(name, value string) error {
+	if txtPropagateSettle > 0 {
+		time.Sleep(txtPropagateSettle)
+	}
 	deadline := time.Now().Add(txtPropagateTimeout)
-	probeFails, confirm := 0, 0
+	confirm, probeFails := 0, 0
+	detail, available := "尚未探测", true
 	for {
-		answered, hits, notFound, err, summary := probeTXT(name, value)
+		ok, d, av := propagationState(name, value)
+		detail, available = d, av
 		switch {
-		case answered > 0 && hits == answered:
-			probeFails = 0
-			confirm++
-			if confirm >= txtPropagateConfirm {
-				return nil
-			}
-		case answered == 0 && !notFound && err != nil:
-			// 一台都问不通：探测能力缺失，不能当作“记录未生效”
+		case !av:
+			// 一台权威都问不通：探测能力缺失，不能当作“记录未生效”
 			confirm = 0
 			probeFails++
 			if probeFails >= 2 {
-				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态("+err.Error()+")，跳过生效检查")
+				core.LogWarn(core.LogCert, "无法校验 TXT 生效状态("+detail+")，跳过生效检查")
+				return nil
+			}
+		case ok:
+			probeFails = 0
+			confirm++
+			if confirm >= txtPropagateConfirm {
+				core.LogInfo(core.LogCert, "TXT 已生效("+name+")："+detail)
 				return nil
 			}
 		default:
-			confirm = 0 // 至少有一台看不到（或缓存了 NXDOMAIN）：继续等
-			probeFails = 0
+			probeFails, confirm = 0, 0
 		}
 		if time.Now().After(deadline) {
-			if answered == 0 && !notFound {
-				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态，跳过生效检查")
+			if !available {
+				core.LogWarn(core.LogCert, "无法校验 TXT 生效状态，跳过生效检查")
 				return nil
 			}
-			core.LogWarn(core.LogCert, "TXT 生效检查未通过("+name+")："+summary)
-			return fmt.Errorf("已等待 %s，部分 DNS 节点查不到该 TXT（%s）", txtPropagateTimeout, summary)
+			core.LogWarn(core.LogCert, "TXT 生效检查未通过("+name+")："+detail)
+			return fmt.Errorf("已等待 %s，仍未在权威 DNS 上查到该 TXT（%s）", txtPropagateTimeout, detail)
 		}
 		time.Sleep(txtPropagateInterval)
 	}
 }
 
-// probeTXT 向每台公共 DNS 各查一次，返回给出明确答案（含“无此记录”）的台数与其中命中期望值的台数，
-// 以及逐台探测结果（超时/不可达的服务器不计入 answered，避免网络限制把结果误判成“记录不一致”）。
-func probeTXT(name, value string) (answered, hits int, notFound bool, lastErr error, summary string) {
+// propagationState 判断 TXT 是否已对外生效：优先直查权威 NS，
+// 拿不到权威清单或权威全不可达时退回公共递归兜底。
+func propagationState(name, value string) (ok bool, detail string, available bool) {
+	za, err := zoneNSFunc(name)
+	if err == nil && za != nil && len(za.servers) > 0 {
+		if ok, detail, available = probeServers(name, value, za.servers); available {
+			return ok, "zone=" + za.zone + " ns=[" + strings.Join(za.hosts, ",") + "] " + detail, true
+		}
+	}
+	rok, rdetail, ravailable := probeRecursive(name, value)
+	if err != nil {
+		rdetail = "权威 NS 获取失败(" + err.Error() + ")，递归兜底 " + rdetail
+	}
+	return rok, rdetail, ravailable
+}
+
+// probeServers 逐台直查：所有给出明确答案的服务器都返回期望值才算生效。
+// 超时/不可达的服务器不计入（容器常无 IPv6 出口），否则会被网络限制误判成记录不一致。
+func probeServers(name, value string, servers []string) (ok bool, detail string, available bool) {
+	answered, hits := 0, 0
+	details := make([]string, 0, len(servers))
+	for _, server := range servers {
+		vals, err := lookupTXTFromFunc(server, name)
+		switch {
+		case err == nil:
+			answered++
+			if hasTXTValue(vals, value) {
+				hits++
+				details = append(details, server+"=命中")
+			} else {
+				details = append(details, server+"=值不符")
+			}
+		case isDNENotFound(err):
+			answered++
+			details = append(details, server+"=无记录")
+		default:
+			details = append(details, server+"=查询失败")
+		}
+	}
+	return answered > 0 && hits == answered, strings.Join(details, ", "), answered > 0
+}
+
+// probeRecursive 公共递归兜底探测：递归可能缓存 NXDOMAIN，命中与否都不够权威，
+// 因此只要求至少 txtPropagateMinHits 台命中。
+func probeRecursive(name, value string) (ok bool, detail string, available bool) {
+	answered, hits := 0, 0
 	details := make([]string, 0, len(publicDNS))
 	for _, server := range publicDNS {
 		vals, err := lookupTXTFromFunc(server, name)
-		if err != nil {
-			if isDNENotFound(err) {
-				notFound = true
-				answered++
-				details = append(details, server+"=无记录")
+		switch {
+		case err == nil:
+			answered++
+			if hasTXTValue(vals, value) {
+				hits++
+				details = append(details, server+"=命中")
 			} else {
-				lastErr = err
-				details = append(details, server+"=查询失败")
+				details = append(details, server+"=值不符")
 			}
-			continue
-		}
-		answered++
-		matched := false
-		for _, v := range vals {
-			if strings.TrimSpace(v) == value {
-				matched = true
-				break
-			}
-		}
-		if matched {
-			hits++
-			details = append(details, server+"=命中")
-		} else {
-			details = append(details, server+"=值不符")
+		case isDNENotFound(err):
+			answered++
+			details = append(details, server+"=无记录")
+		default:
+			details = append(details, server+"=查询失败")
 		}
 	}
-	return answered, hits, notFound, lastErr, strings.Join(details, ", ")
+	required := txtPropagateMinHits
+	if answered < required {
+		required = answered
+	}
+	return required > 0 && hits >= required, strings.Join(details, ", "), answered > 0
+}
+
+// hasTXTValue 结果中是否含期望值。
+func hasTXTValue(vals []string, value string) bool {
+	for _, v := range vals {
+		if strings.TrimSpace(v) == value {
+			return true
+		}
+	}
+	return false
 }
 
 // lookupTXTFrom 向指定 DNS 服务器查询 TXT（PreferGo 直接发 UDP，不走系统解析器的本地缓存）。
 func lookupTXTFrom(server, name string) ([]string, error) {
-	r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return resolverAt(server).LookupTXT(ctx, name)
+}
+
+// resolverAt 构造直连指定服务器的解析器。
+func resolverAt(server string) *net.Resolver {
+	return &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		d := net.Dialer{Timeout: 5 * time.Second}
 		return d.DialContext(ctx, "udp", server)
 	}}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	return r.LookupTXT(ctx, name)
+}
+
+// zoneNameservers 找出域名所在区的权威信息：从完整记录名开始逐级向上找 NS
+// （_acme-challenge.xxx 这类子名本身没有 NS 记录），再把 NS 主机名解析成可直连的 ip:53。
+func zoneNameservers(name string) (*zoneAuth, error) {
+	labels := strings.Split(strings.Trim(name, "."), ".")
+	za := &zoneAuth{}
+	for i := 1; i < len(labels); i++ {
+		z := strings.Join(labels[i:], ".")
+		if h, err := lookupNSHosts(z); err == nil && len(h) > 0 {
+			za.zone, za.hosts = z, h
+			break
+		}
+	}
+	if za.zone == "" {
+		return nil, fmt.Errorf("未找到 %s 的权威 NS", name)
+	}
+	for _, h := range za.hosts {
+		if addr := hostAddr(h); addr != "" {
+			za.servers = append(za.servers, addr)
+		}
+	}
+	if len(za.servers) == 0 {
+		return nil, fmt.Errorf("%s 的权威 NS 均无法解析出 IP(%s)", za.zone, strings.Join(za.hosts, ","))
+	}
+	return za, nil
+}
+
+// lookupNSHosts 查区的 NS 主机名：先用系统解析器，失败再挨个试公共 DNS
+// （部分容器没有系统 DNS 转发或被拦截）。
+func lookupNSHosts(zone string) ([]string, error) {
+	if recs, err := net.LookupNS(zone); err == nil && len(recs) > 0 {
+		return nsHostList(recs), nil
+	}
+	lastErr := error(fmt.Errorf("%s 无 NS 记录", zone))
+	for _, server := range publicDNS {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		recs, err := resolverAt(server).LookupNS(ctx, zone)
+		cancel()
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(recs) > 0 {
+			return nsHostList(recs), nil
+		}
+	}
+	return nil, lastErr
+}
+
+func nsHostList(recs []*net.NS) []string {
+	out := make([]string, 0, len(recs))
+	for _, r := range recs {
+		if h := strings.TrimSuffix(r.Host, "."); h != "" {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// hostAddr NS 主机名 -> "ip:53"：优先 IPv4（容器常见无 IPv6 出口），IPv6 需加方括号。
+func hostAddr(host string) string {
+	names, err := net.LookupHost(host)
+	if err != nil || len(names) == 0 {
+		for _, server := range publicDNS {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			names, err = resolverAt(server).LookupHost(ctx, host)
+			cancel()
+			if err == nil && len(names) > 0 {
+				break
+			}
+		}
+	}
+	v6 := ""
+	for _, s := range names {
+		ip := net.ParseIP(s)
+		if ip == nil {
+			continue
+		}
+		if ip.To4() != nil {
+			return s + ":53"
+		}
+		if v6 == "" {
+			v6 = s
+		}
+	}
+	if v6 != "" {
+		return "[" + v6 + "]:53"
+	}
+	return ""
 }
 
 // isDNENotFound 是否为权威返回的“记录不存在”（区别于超时/网络不可达）。
