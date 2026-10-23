@@ -196,6 +196,9 @@ func esaListRecords(ak, sk, siteId, recordName string) ([]map[string]interface{}
 	if err != nil {
 		return nil, err
 	}
+	if err := checkEsaError(resp); err != nil {
+		return nil, err
+	}
 	return arrAt(resp, "Records"), nil
 }
 

@@ -170,6 +170,7 @@ type acmeChallenge struct {
 	Type  string
 	URL   string
 	Token string
+	Err   string // CA 回报的校验失败原因（problem+json 的 type/detail，校验通过时为空）
 }
 
 type acmeAuth struct {
@@ -177,6 +178,19 @@ type acmeAuth struct {
 	Status     string
 	Wildcard   bool
 	Challenges []acmeChallenge
+}
+
+// challengeFailure 汇总授权下各挑战的失败原因，供授权状态为 invalid 时报错展示。
+// CA 通常只在 challenge.error 里给出真正原因（如 TXT 记录不存在/值不符），
+// 只报最终状态 INVALID 会让用户无从排查。
+func (a *acmeAuth) challengeFailure() string {
+	for i := range a.Challenges {
+		if a.Challenges[i].Err == "" {
+			continue
+		}
+		return a.Challenges[i].Err
+	}
+	return ""
 }
 
 // findChallenge 按类型查找验证方式（等价 acme4j findChallenge(...).orElseThrow）。
@@ -496,6 +510,10 @@ func (c *acmeClient) fetchAuth(url string) (*acmeAuth, error) {
 			Type  string `json:"type"`
 			URL   string `json:"url"`
 			Token string `json:"token"`
+			Error *struct {
+				Type   string `json:"type"`
+				Detail string `json:"detail"`
+			} `json:"error"`
 		} `json:"challenges"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
@@ -503,9 +521,29 @@ func (c *acmeClient) fetchAuth(url string) (*acmeAuth, error) {
 	}
 	a := &acmeAuth{Domain: v.Identifier.Value, Status: v.Status, Wildcard: v.Wildcard}
 	for _, ch := range v.Challenges {
-		a.Challenges = append(a.Challenges, acmeChallenge{Type: ch.Type, URL: ch.URL, Token: ch.Token})
+		c := acmeChallenge{Type: ch.Type, URL: ch.URL, Token: ch.Token}
+		if ch.Error != nil {
+			c.Err = problemText(ch.Error.Type, ch.Error.Detail)
+		}
+		a.Challenges = append(a.Challenges, c)
 	}
 	return a, nil
+}
+
+// problemText 把 problem+json 的错误类型与详情压成一行文本（type 取 urn 末段）。
+func problemText(typ, detail string) string {
+	t := typ
+	if i := strings.LastIndex(t, ":"); i >= 0 {
+		t = t[i+1:]
+	}
+	switch {
+	case t != "" && detail != "":
+		return t + ": " + detail
+	case detail != "":
+		return detail
+	default:
+		return t
+	}
 }
 
 // triggerChallenge 通知 CA 开始校验（POST 空对象负载）。

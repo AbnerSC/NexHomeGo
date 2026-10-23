@@ -42,7 +42,7 @@ async function renderCert() {
         Let's Encrypt 免费无需凭证；<b>ZeroSSL 需要在下方填写 EAB 凭证</b>（ZeroSSL 控制台 → Developer → EAB Credentials 生成）。
         HTTP01 验证要求公网可访问本机 80 端口（可路由器转发）；无法开放 80 端口时选择 DNS01——
         域名解析托管在阿里云（云解析或 ESA）的可在下方配置中选择凭证实现 <b>全自动验证</b>（含通配符；
-        托管在 ESA 需在凭证配置中填写站点 SiteId），否则手动添加 TXT 记录。
+        托管在 ESA 需在凭证配置中选择站点），否则手动添加 TXT 记录。
       </div>
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">服务商凭证设置</h3>
@@ -148,7 +148,7 @@ window.certForm = async (id) => {
     // 默认保存目录（后端下发，供新增任务预填）
     let defaultSaveDir = '/app/data/ssl';
     try { const s = await api('GET', '/api/cert/settings'); defaultSaveDir = s.default_save_dir || defaultSaveDir; } catch (e) { /* ignore */ }
-    // DNS01 自动验证支持阿里云（云解析或 ESA 托管的域名，ESA 需在凭证配置中填写站点 SiteId），
+    // DNS01 自动验证支持阿里云（云解析或 ESA 托管的域名，ESA 需在凭证配置中选择站点），
     // 仅列出该类型配置（已引用的配置始终保留避免编辑时回显丢失）
     const credOpts = configs
         .filter(c => (c.provider_type || 'ALIYUN') === 'ALIYUN' || c.id === t.provider_config_id)

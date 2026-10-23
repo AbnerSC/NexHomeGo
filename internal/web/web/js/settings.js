@@ -98,7 +98,7 @@ async function renderSettings() {
         <div class="toolbar" style="margin-bottom:10px"><div class="spacer"></div>
           <button class="btn primary" onclick="provForm()">＋ 新增配置</button></div>
         <table>
-          <thead><tr><th>名称</th><th>服务商</th><th>AccessKey ID</th><th>ESA SiteId</th><th>操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>服务商</th><th>AccessKey ID</th><th>ESA 站点</th><th>操作</th></tr></thead>
           <tbody>${cfgRows || '<tr><td colspan="5" class="muted">暂无配置，可在 DDNS / 证书表单中手动填写凭证</td></tr>'}</tbody>
         </table>
       </div>
@@ -214,19 +214,29 @@ async function renderSettings() {
     });
 }
 
-/** 服务商凭证配置新增/编辑弹窗（服务商清单动态拉取， ESA SiteId 仅阿里云显示） */
+/** 服务商凭证配置新增/编辑弹窗（服务商清单动态拉取；ESA 站点为阿里云 ESA 专属，从账号站点列表下拉选择） */
 window.provForm = async (id) => {
     let c = {}, types = {};
     if (id) c = (await api('GET', '/api/provider/configs')).find(x => x.id === id);
     try { types = await api('GET', '/api/provider/types'); } catch (e) { /* ignore */ }
     const typeOpts = Object.entries(types).map(([code, name]) =>
         `<option value="${esc(code)}" ${(c.provider_type || 'ALIYUN') === code ? 'selected' : ''}>${esc(name)}</option>`).join('');
+    const curSite = c.esa_site_id ? String(c.esa_site_id) : '';
+    const siteOpt = curSite
+        ? `<option value="${esc(curSite)}" selected>${esc(curSite)}（当前站点，点击“加载站点”显示站点名称）</option>`
+        : '<option value="">未选择（点击“加载站点”）</option>';
     modal(id ? '编辑服务商凭证配置' : '新增服务商凭证配置', `
       <form id="provFormEl" class="form-grid">
         <div class="field"><label>配置名称 <b>*</b></label><input name="name" required placeholder="如：阿里云主账号" value="${esc(c.name || '')}"></div>
         <div class="field"><label>服务商 <b>*</b></label>
           <select name="provider_type" onchange="provTypeChanged(this.value)">${typeOpts}</select></div>
-        <div class="field hidden" id="fEsaSite"><label>ESA 站点 SiteId（可选）</label><input name="esa_site_id" placeholder="数字站点ID，仅 ESA 使用" value="${esc(c.esa_site_id || '')}"></div>
+        <div class="field hidden" id="fEsaSite"><label>ESA 站点（可选）</label>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            <select name="esa_site_id" id="provEsaSiteSel" style="flex:1;min-width:200px">${siteOpt}</select>
+            <button type="button" class="btn" onclick="provLoadEsaSites()">加载站点</button>
+          </div>
+          <div id="provEsaSiteHint" class="small muted" style="margin-top:6px">填写 AccessKey 后可点击“加载站点”拉取账号下的 ESA 站点列表。</div>
+        </div>
         <div class="field full"><label>AccessKey ID <b>*</b></label><input name="access_key_id" required value="${esc(c.access_key_id || '')}"></div>
         <div class="field full"><label>AccessKey Secret <b>*</b></label><input name="access_key_secret" required type="password" value="${esc(c.access_key_secret || '')}"></div>
         <div class="form-foot full">
@@ -234,10 +244,58 @@ window.provForm = async (id) => {
           <button class="btn primary">保存</button>
         </div>
       </form>`);
-    window.provTypeChanged = v => {
-        // ESA SiteId 为阿里云 ESA 专属，其他服务商隐藏
-        $('#fEsaSite').classList.toggle('hidden', v !== 'ALIYUN');
+    // 按表单里当前的 AK/SK 实时拉取 ESA 站点（无需先保存配置）；silent 为自动触发，凭证不全时不报错
+    window.provLoadEsaSites = async (silent) => {
+        const f = new FormData($('#provFormEl'));
+        const ak = String(f.get('access_key_id') || '').trim();
+        const sk = String(f.get('access_key_secret') || '').trim();
+        const sel = $('#provEsaSiteSel'), hint = $('#provEsaSiteHint');
+        const cur = sel.value || curSite;
+        if (!ak || !sk) {
+            if (!silent) {
+                hint.className = 'small'; hint.style.color = 'var(--red)';
+                hint.textContent = '请先填写 AccessKey ID 与 AccessKey Secret，再加载站点。';
+            }
+            return;
+        }
+        hint.className = 'small muted'; hint.style.color = ''; hint.textContent = '正在拉取 ESA 站点…';
+        try {
+            const r = await api('POST', '/api/ddns/esa/sites', { access_key_id: ak, access_key_secret: sk });
+            const sites = r.sites || [];
+            if (!sites.length) {
+                sel.innerHTML = (cur ? `<option value="${esc(cur)}" selected>${esc(cur)}（当前站点）</option>` : '')
+                    + '<option value="">无可用站点</option>';
+                hint.className = 'small'; hint.style.color = 'var(--red)';
+                hint.textContent = '该账号下未找到 ESA 站点，请先到阿里云 ESA 控制台添加站点后再选择。';
+                return;
+            }
+            sel.innerHTML = '<option value="">不使用 ESA 站点</option>' + sites.map(s =>
+                `<option value="${esc(s.site_id)}" ${cur === String(s.site_id) ? 'selected' : ''}>${esc(s.site_name)}（SiteId: ${esc(s.site_id)}${s.status ? '，' + esc(s.status) : ''}）</option>`).join('');
+            // 已保存站点不在列表中（如已被删除）：保留原值，避免编辑时静默丢失
+            if (cur && !sites.some(s => String(s.site_id) === cur)) {
+                sel.insertAdjacentHTML('afterbegin', `<option value="${esc(cur)}" selected>${esc(cur)}（当前站点，未在阿里云列表中找到）</option>`);
+            }
+            hint.textContent = '仅域名托管在 ESA 时需要选择站点；云解析域名可留空。';
+        } catch (e) {
+            // 自动触发（如打开编辑弹窗）失败不做强提示，避免历史凭证过期时一进表单就报红
+            if (silent) { hint.className = 'small muted'; hint.style.color = ''; }
+            else { hint.className = 'small'; hint.style.color = 'var(--red)'; }
+            hint.textContent = '站点列表加载失败：' + e.message;
+        }
     };
+    window.provTypeChanged = v => {
+        // ESA 站点为阿里云 ESA 专属，其他服务商隐藏
+        $('#fEsaSite').classList.toggle('hidden', v !== 'ALIYUN');
+        // AK/SK 已填写时自动拉取站点列表（编辑场景打开弹窗即可看到站点名称）
+        if (v === 'ALIYUN') provLoadEsaSites(true);
+    };
+    // AK 变更后账号可能不同：重新拉取站点列表（仅 ESA 字段可见时）
+    ['access_key_id', 'access_key_secret'].forEach(n => {
+        const el = $('#provFormEl').querySelector(`[name="${n}"]`);
+        if (el) el.addEventListener('change', () => {
+            if (!$('#fEsaSite').classList.contains('hidden')) provLoadEsaSites(true);
+        });
+    });
     window.provTypeChanged(c.provider_type || 'ALIYUN');
     $('#provFormEl').addEventListener('submit', async e => {
         e.preventDefault();

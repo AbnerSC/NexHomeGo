@@ -11,6 +11,7 @@ package cert
 // 证书文件保存在 data/certs/task-{id}/：私钥、证书、完整证书链（PEM）。
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/tls"
@@ -379,6 +380,7 @@ func doIssue(taskID int64, trigger string) error {
 			}
 			domain := a.Domain
 			digest := dns01Digest(keyAuthorization(ch.Token, client.jwkJSON))
+			setStatus(taskID, "ISSUING", "正在写入并等待 TXT 记录生效: _acme-challenge."+domain, nil)
 			txt, err := autoApplyTxt(cred, domain, digest)
 			if err != nil {
 				return err
@@ -387,8 +389,12 @@ func doIssue(taskID int64, trigger string) error {
 			if err := client.triggerChallenge(ch.URL); err != nil {
 				return err
 			}
+			record := ""
+			if txt.recordId != "" {
+				record = "（RecordId=" + txt.recordId + "）"
+			}
 			core.LogInfo(core.LogCert, "任务["+name+"] dns-01 已自动写入"+txt.channelName()+
-				" TXT: _acme-challenge."+domain)
+				" TXT: _acme-challenge."+domain+record+"，公网已生效")
 		}
 		if err := waitAuthorizations(client, order, 180*time.Second); err != nil {
 			return err
@@ -496,7 +502,11 @@ func waitAuthorizations(c *acmeClient, order *acmeOrder, timeout time.Duration) 
 			return err
 		}
 		if a.Status != "valid" {
-			return fmt.Errorf("域名 %s 验证未通过(%s)，请检查验证配置后重试", a.Domain, strings.ToUpper(a.Status))
+			msg := fmt.Sprintf("域名 %s 验证未通过(%s)", a.Domain, strings.ToUpper(a.Status))
+			if detail := a.challengeFailure(); detail != "" {
+				msg += "：" + detail
+			}
+			return errors.New(msg + "，请检查验证配置后重试")
 		}
 	}
 	return nil
@@ -782,11 +792,53 @@ func dnsCredentials(task *core.Row) (*dnsCred, error) {
 }
 
 // autoApplyTxt 向阿里云写入 dns-01 TXT 记录并返回写入结果，供验证结束后按原通道清理。
-// 授权域可能是主域或其子域（泛域名授权的 identifier 为主域），而云解析接口的 DomainName 参数
-// 必须是账户内的主域：优先整域探测，失败逐级剥离左段重试（最多三层）。
-// 已存在相同值的 TXT 直接复用（如上次失败残留），避免重复添加。
-// 云解析全部探测失败且凭证配置填写了 ESA 站点时，说明域名解析托管在 ESA，降级改走 ESA 记录接口。
+// 通道优先级：凭证配置填写了 ESA 站点时优先 ESA——域名解析迁移到 ESA 后，云解析里往往仍残留同名域名
+// （接口可查询甚至可新增记录），写进去的 TXT 不会真正生效，CA 必然判 INVALID；
+// ESA 写入失败（如记录名后缀与站点不符）时回退云解析。
+// 写入成功后先确认 TXT 已在公网可见再返回：随后马上触发 CA 校验，记录未生效就是白白失败一次。
 func autoApplyTxt(cred *dnsCred, domain, value string) (txtRecord, error) {
+	var errs []string
+	for _, ch := range txtChannels(cred) {
+		rec, err := ch.apply(cred, domain, value)
+		if err != nil {
+			// 写入失败说明该通道不托管此域名：换下一个通道重试
+			errs = append(errs, ch.name+"写入失败("+err.Error()+")")
+			continue
+		}
+		if err := waitTxtPropagated("_acme-challenge."+domain, value); err != nil {
+			msg := ch.name + "已写入 TXT 记录但公网 DNS 未生效（" + err.Error() + "）"
+			if ch.name == "阿里云云解析" {
+				msg += "；若域名解析已迁移到阿里云 ESA，请在凭证配置中选择 ESA 站点"
+			} else {
+				msg += "；ESA 解析记录同步到边缘节点可能需要数分钟，请稍后重试"
+			}
+			return txtRecord{}, errors.New(msg)
+		}
+		return rec, nil
+	}
+	return txtRecord{}, errors.New("自动写入 TXT 记录失败：" + strings.Join(errs, "；"))
+}
+
+// txtChannel 一个 TXT 写入通道（云解析 / ESA）。
+type txtChannel struct {
+	name  string
+	apply func(*dnsCred, string, string) (txtRecord, error)
+}
+
+// txtChannels 按优先级返回可用通道：凭证配置填了 ESA 站点时 ESA 优先（此时用户就是把域名托管在 ESA，
+// 云解析里的同名域名只是残留），否则只走云解析。
+func txtChannels(cred *dnsCred) []txtChannel {
+	channels := make([]txtChannel, 0, 2)
+	if strings.TrimSpace(cred.esaSiteId) != "" {
+		channels = append(channels, txtChannel{"阿里云ESA", esaApplyTxt})
+	}
+	return append(channels, txtChannel{"阿里云云解析", dnsApplyTxt})
+}
+
+// dnsApplyTxt 云解析通道：授权域可能是主域或其子域（泛域名授权的 identifier 为主域），
+// 而云解析接口的 DomainName 参数必须是账户内的主域：优先整域探测，失败逐级剥离左段重试（最多三层）。
+// 已存在相同值的 TXT 直接复用（如上次失败残留），避免重复添加。
+func dnsApplyTxt(cred *dnsCred, domain, value string) (txtRecord, error) {
 	parts := strings.Split(domain, ".")
 	maxStrip := 2
 	if len(parts)-2 < maxStrip {
@@ -826,35 +878,125 @@ func autoApplyTxt(cred *dnsCred, domain, value string) (txtRecord, error) {
 		}
 		return txtRecord{channel: "DNS", recordId: id}, nil
 	}
-	if strings.TrimSpace(cred.esaSiteId) != "" {
-		return esaApplyTxt(cred, domain, value)
-	}
-	msg := ""
 	if lastErr != nil {
-		msg = lastErr.Error()
+		return txtRecord{}, lastErr
 	}
-	return txtRecord{}, fmt.Errorf("自动写入 TXT 失败（无法定位 %s 的主域；若域名解析托管在阿里云 ESA，"+
-		"请在所引用的凭证配置中填写 ESA 站点 SiteId）: %s", domain, msg)
+	return txtRecord{}, fmt.Errorf("无法定位 %s 的主域", domain)
 }
 
-// esaApplyTxt ESA 托管域名：向站点写入 _acme-challenge TXT（ESA 记录名为完整记录名）。
+// esaApplyTxt ESA 托管域名：向站点写入 _acme-challenge TXT（ESA 记录名为完整域名）。
+// 注意 ListRecords 返回的记录类型字段是 RecordType（不是云解析的 Type），
+// 判错字段会让“同名同值复用”永远失效，每次重试都在云端新增一条同名 TXT 记录。
 func esaApplyTxt(cred *dnsCred, domain, value string) (txtRecord, error) {
 	fullName := "_acme-challenge." + domain
+	siteHint := "（请检查凭证配置中选择的 ESA 站点是否为 " + domain + " 所在站点）"
 	records, err := ddns.EsaListRecords(cred.ak, cred.sk, cred.esaSiteId, fullName)
 	if err != nil {
-		return txtRecord{}, fmt.Errorf("ESA 写入 TXT 失败（请检查凭证配置的 ESA 站点 SiteId 是否为 %s 所在站点）: %w", domain, err)
+		return txtRecord{}, errors.New("ESA 写入 TXT 失败" + siteHint + ": " + err.Error())
 	}
-	for _, r := range records {
-		data := fieldObj(r, "Data")
-		if strings.EqualFold(fieldStr(r, "Type"), "TXT") && data != nil && value == fieldStr(data, "Value") {
-			return txtRecord{channel: "ESA"}, nil // 已有相同值记录，无需重复添加
-		}
+	if esaHasTxt(records, fullName, value) {
+		return txtRecord{channel: "ESA"}, nil // 已有相同值记录，无需重复添加
 	}
 	id, err := ddns.EsaCreateRecord(cred.ak, cred.sk, cred.esaSiteId, fullName, "TXT", value, 600)
 	if err != nil {
-		return txtRecord{}, fmt.Errorf("ESA 写入 TXT 失败（请检查凭证配置的 ESA 站点 SiteId 是否为 %s 所在站点）: %w", domain, err)
+		return txtRecord{}, errors.New("ESA 写入 TXT 失败" + siteHint + ": " + err.Error())
 	}
 	return txtRecord{channel: "ESA", recordId: id}, nil
+}
+
+// esaHasTxt 线上记录中是否已存在同名同值的 TXT（ESA 列表的类型字段是 RecordType，值为 Data.Value）。
+func esaHasTxt(records []map[string]interface{}, fullName, value string) bool {
+	for _, r := range records {
+		if !strings.EqualFold(fieldStr(r, "RecordType"), "TXT") ||
+			!strings.EqualFold(fieldStr(r, "RecordName"), fullName) {
+			continue
+		}
+		if data := fieldObj(r, "Data"); data != nil && value == fieldStr(data, "Value") {
+			return true
+		}
+	}
+	return false
+}
+
+// publicDNS 生效探测使用的公共 DNS（依次尝试；声明为变量便于单测注入）。
+var publicDNS = []string{"223.5.5.5:53", "119.29.29.29:53", "8.8.8.8:53"}
+
+// txtPropagateTimeout / txtPropagateInterval 生效等待上限与轮询间隔；lookTXT 为探测器。
+// 均声明为变量以便单测替换。
+var (
+	txtPropagateTimeout  = 90 * time.Second
+	txtPropagateInterval = 3 * time.Second
+	lookTXT              = lookupPublicTXT
+)
+
+// waitTxtPropagated 轮询公共 DNS 等待 TXT 记录生效（未生效就去触发 CA 校验必然 INVALID）。
+// 探测能力不可用（容器无外网 UDP 53、DNS 全部超时）时记日志放行，
+// 不能因为本机探测不了就阻断签发。
+func waitTxtPropagated(name, value string) error {
+	deadline := time.Now().Add(txtPropagateTimeout)
+	answered, probeFails := false, 0
+	for {
+		vals, err := lookTXT(name)
+		switch {
+		case err == nil:
+			answered, probeFails = true, 0
+			for _, v := range vals {
+				if strings.TrimSpace(v) == value {
+					return nil
+				}
+			}
+		case isDNENotFound(err):
+			answered, probeFails = true, 0
+		default:
+			probeFails++
+			if probeFails >= 2 && !answered {
+				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态("+err.Error()+")，跳过生效检查")
+				return nil
+			}
+		}
+		if time.Now().After(deadline) {
+			if !answered {
+				core.LogWarn(core.LogCert, "无法通过公共 DNS 校验 TXT 生效状态，跳过生效检查")
+				return nil
+			}
+			return fmt.Errorf("%s 未查询到预期 TXT 值（已等待 %s）", name, txtPropagateTimeout)
+		}
+		time.Sleep(txtPropagateInterval)
+	}
+}
+
+// lookupPublicTXT 逐个公共 DNS 查询 TXT 记录，任一返回即采用；单台报“无记录”时继续问下一台
+// （各递归的 NXDOMAIN 负缓存相互独立，只凭一台定论容易误判为未生效）。
+func lookupPublicTXT(name string) ([]string, error) {
+	var lastErr error
+	notFound := 0
+	for _, server := range publicDNS {
+		srv := server
+		r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			d := net.Dialer{Timeout: 5 * time.Second}
+			return d.DialContext(ctx, "udp", srv)
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		vals, err := r.LookupTXT(ctx, name)
+		cancel()
+		if err == nil {
+			return vals, nil
+		}
+		lastErr = err
+		if isDNENotFound(err) {
+			notFound++
+		}
+	}
+	if notFound == len(publicDNS) {
+		return nil, &net.DNSError{IsNotFound: true, Err: "no such host", Name: name}
+	}
+	return nil, lastErr
+}
+
+// isDNENotFound 是否为权威返回的“记录不存在”（区别于超时/网络不可达）。
+func isDNENotFound(err error) bool {
+	var de *net.DNSError
+	return errors.As(err, &de) && de.IsNotFound
 }
 
 // cleanupTxt 验证结束后清理自动写入的 TXT 记录（CA 已缓存验证结果，删除不影响签发；失败仅记日志）。
