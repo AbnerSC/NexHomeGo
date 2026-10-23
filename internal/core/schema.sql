@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS app_config (
 );
 
 -- 服务商凭证配置表（云服务商 AccessKey 等，DDNS / SSL 证书 DNS01 按名称选择引用）
--- provider_type : 服务商类型（ALIYUN 等，清单见 ProviderConfigService.PROVIDER_TYPES，后续可扩展）
+-- provider_type : 服务商类型（ALIYUN 等，清单见 internal/module/provider/provider.go 的 providerTypes，后续可扩展）
 -- esa_site_id   : 可选，仅阿里云 ESA 使用；DDNS 任务选择配置后自动带出（可按任务覆盖），
 --                  证书 DNS01 在云解析定位不到域名（托管在 ESA）时自动用该站点写入 TXT
 CREATE TABLE IF NOT EXISTS provider_config (
@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS nav_item (
 -- force_https: 1 时 HTTP 请求 301 跳转到 https://同域名
 -- cert_mode  : AUTO=SNI 自动匹配已签发证书 / TASK=指定证书任务 / NONE=仅 HTTP 不接 TLS
 -- advanced   : 高级配置 JSON（请求/响应头改写、路径重写、超时、限流、BasicAuth、
---               IP 白名单、后端 TLS 校验开关、文件缓存等，字段语义见 ProxyAdvanced 类注释）
+--               IP 白名单、后端 TLS 校验开关、文件缓存等，字段语义见 proxy/advanced.go 文件头注释与 Advanced 结构体）
 CREATE TABLE IF NOT EXISTS proxy_site (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL,
@@ -208,7 +208,7 @@ CREATE TABLE IF NOT EXISTS proxy_site (
     created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
--- 反向代理访问记录（按月分表，表由 VisitStats 在首次落库前动态创建，建表语句在类内维护）
+-- 反向代理访问记录（按月分表，表由 proxy/stats.go 的 statsEnsureTable 在首次落库前动态创建，建表语句在源码内维护）
 -- 表名   : proxy_visit_stat_yyyymm（当月一张，按天×域名×客户端IP 聚合，无逐请求明细）
 -- host      : 请求 Host 头的域名（小写、去端口），非站点名称——同一站点多域名分开记录
 -- country/province/city : 客户端 IP 归属地（在线解析，中文）；国内记到省/市，外国仅记国家，
@@ -220,7 +220,7 @@ CREATE TABLE IF NOT EXISTS proxy_site (
 -- 告警通知渠道表（统一通知中心：Webhook / Email / 钉钉，各模块事件按启用渠道扇出；
 -- 穿透任务等可按任务自选渠道扇出，见 stun_task.notify_channels）
 -- type   : WEBHOOK（通用 HTTP 回调） / EMAIL（SMTP 邮件） / DINGTALK（钉钉自定义机器人）
--- config : 按渠道类型的 JSON 配置（详见 NotifyService 类注释），含敏感信息如邮箱密码、加签密钥
+-- config : 按渠道类型的 JSON 配置（详见 notify/notify.go 文件头注释），含敏感信息如邮箱密码、加签密钥
 CREATE TABLE IF NOT EXISTS notify_channel (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     name       TEXT NOT NULL,

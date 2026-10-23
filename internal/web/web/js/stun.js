@@ -89,7 +89,7 @@ function esaCell(t) {
     return `<div>${badge(result, kind)}</div>${st.time ? `<div class="small muted">${esc(st.time)}</div>` : ''}`;
 }
 
-/** 通知推送单元格：投递结果不落在任务行（写入 notify_log，在「告警通知」页查看），此处只展示启用与渠道数 */
+/** 通知推送单元格：投递结果不落在任务行（写入 notify_log，在「通知中心」页查看），此处只展示启用与渠道数 */
 function notifyCell(t) {
     if (t.notify_enabled !== 1) return '<span class="muted small">未启用</span>';
     const n = notifySnapshot(t.notify_channels).length;
@@ -154,7 +154,7 @@ window.stunEsaSync = async id => {
     } catch (e) { toast(e.message, 'err'); }
 };
 
-/** 手动试发一次穿透通知（按任务勾选的渠道；投递异步，结果到「告警通知」页看） */
+/** 手动试发一次穿透通知（按任务勾选的渠道；投递异步，结果到「通知中心」页看） */
 window.stunNotifyTest = async id => {
     try { toast(await api('POST', `/api/stun/tasks/${id}/notify-test`), 'ok'); }
     catch (e) { toast(e.message, 'err'); }
@@ -212,7 +212,7 @@ window.stunForm = async (id) => {
     const recChecked = new Map(esaSnapshot(t.esa_records).map(p => [String(p.id), p.name]));
     const ruleChecked = new Map(esaSnapshot(t.esa_rules).map(p => [String(p.id), p.name]));
     let esaRecOnline = null, esaRuleOnline = null; // 线上列表，null=尚未拉取
-    // 通知中心渠道（统一在「告警通知」页维护，任务只勾选用哪些，可多选）
+    // 通知中心渠道（统一在「通知中心」页维护，任务只勾选用哪些，可多选）
     let notifyChannels = [];
     try { notifyChannels = await api('GET', '/api/notify/channels'); } catch (e) { /* ignore */ }
     const notifyChecked = new Set(notifySnapshot(t.notify_channels));

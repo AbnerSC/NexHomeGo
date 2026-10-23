@@ -97,7 +97,7 @@ func fileExists(path string) bool {
 	return err == nil && !st.IsDir()
 }
 
-// writeFileAll 原子性写文件（父目录不存在自动创建），供证书/图标等落盘收敛到 data 下使用。
+// writeFileAll 直接写文件（父目录不存在自动创建，非原子写入），供证书/图标等落盘收敛到 data 下使用。
 func writeFileAll(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

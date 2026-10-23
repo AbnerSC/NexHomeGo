@@ -12,7 +12,7 @@ import (
 // 避免每个任务重复填写。任务通过 provider_config_id 引用本表；删除配置时把当前凭证回填到引用任务，
 // 保证继续可用。路径/方法/响应结构逐一复刻 Java ProviderConfigService。
 
-// types 支持的服务商类型（code -> 显示名，保持登记顺序）。
+// providerTypes 支持的服务商类型（code -> 显示名，保持登记顺序）。
 var providerTypes = []struct{ code, name string }{
 	{"ALIYUN", "阿里云（云解析 / ESA）"},
 }

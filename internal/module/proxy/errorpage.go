@@ -150,7 +150,7 @@ func metaBlock(kv ...string) string {
 	return "<div class=\"meta\">" + rows.String() + "</div>"
 }
 
-// escapeHTML HTML 文本转义（& < > " '），用于把不可控输入安全嵌入页面
+// escapeHtml HTML 文本转义（& < > " '），用于把不可控输入安全嵌入页面
 func escapeHtml(s string) string {
 	if s == "" {
 		return ""

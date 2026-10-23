@@ -33,7 +33,7 @@ type routeEntry struct {
 type segment struct {
 	literal string
 	param   string // 非空表示 {name}
-	// reg 仅用于通配尾段（如 /nav-icons/{file} 里 file 含点，仍按单段处理；扩展场景另用 catchAll）
+	// catchAll 预留的通配尾段标记（当前解析与匹配逻辑均未使用）
 	catchAll bool
 }
 

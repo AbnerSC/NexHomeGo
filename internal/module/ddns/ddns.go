@@ -297,7 +297,7 @@ func tryDeleteRemote(task *core.Row, fullDomain string) (string, error) {
 	return "（已删除远程解析记录 " + fullDomain + "）", nil
 }
 
-// validate 表单必填与取值合法性校验（仅创建时执行；更新时前端已回传完整表单，与 Java 一致）。
+// validate 表单必填与取值合法性校验（创建与更新时均执行；更新需回传完整表单）。
 func validate(b map[string]interface{}) error {
 	if strings.TrimSpace(core.BodyStr(b, "name")) == "" {
 		return core.NewBadRequest("任务名称不能为空")

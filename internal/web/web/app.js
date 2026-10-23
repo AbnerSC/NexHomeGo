@@ -1,7 +1,8 @@
 /* ============ NexHome 前端逻辑（原生 JS，无框架） ============ */
 /* 主入口：通用工具、登录鉴权、页面路由。
    各菜单模块的逻辑拆分到 js/ 目录（须在 index.html 中先于本文件加载）：
-   home=网站导航 ddns=DDNS stun=STUN wol=WOL cert=SSL证书 docker=Docker logs=日志 settings=设置 */
+   dashboard=仪表盘 home=网站导航 ddns=DDNS stun=STUN monitor=可用性监控 notify=通知中心
+   wol=WOL cert=SSL证书 proxy=反向代理 docker=Docker logs=日志 diag=内存诊断 settings=设置 */
 'use strict';
 
 const $ = s => document.querySelector(s);
@@ -90,7 +91,7 @@ function closeModal() {
  *   { title, message, html, confirmText, cancelText, danger, boxWidth }
  *   html：传入时以富文本渲染确认内容（如镜像预览表），优先级高于 message；
  *   boxWidth：需要展示表格等宽内容时放宽弹窗宽度（如 '560px'）。
- * @returns {Promise<boolean>} 点击确认返回 true；取消、点击遮罩或按 Esc 返回 false
+ * @returns {Promise<boolean>} 点击确认或按 Enter 返回 true；点击取消或按 Esc 返回 false（点击遮罩不关闭）
  * 用法：if (!(await confirmBox({ message: '确定删除？', danger: true }))) return;
  */
 function confirmBox(opts) {

@@ -28,7 +28,7 @@ type Region struct {
 
 var regionLAN = &Region{Country: "局域网"}
 
-// cacheLimit 缓存容量上限：超限后仅检索不缓存，防止异常流量撑爆内存
+// geoCacheLimit 缓存容量上限：达到上限后仅检索不缓存，防止异常流量撑爆内存
 const geoCacheLimit = 5000
 
 //go:embed db/ip2region_v4.xdb db/ip2region_v6.xdb

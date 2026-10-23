@@ -1,7 +1,7 @@
 package stun
 
 // STUN 穿透结果通知：穿透成功 / 外网映射地址变化 / 可用性自测确认失效（FAIL）时，把结果按任务勾选的渠道投递到
-// 统一告警通知中心（渠道在「告警通知」页集中维护，任务只选择用哪些渠道，可多选）。复刻 Java StunNotify。
+// 统一告警通知中心（渠道在「通知中心」页集中维护，任务只选择用哪些渠道，可多选）。复刻 Java StunNotify。
 //
 // 配置存于 stun_task：notify_enabled（开关）、notify_channels（勾选的渠道 id JSON 数组，如 [1,3]）。
 //
@@ -10,7 +10,7 @@ package stun
 // 模板中以 ${event} 引用。此外，周期巡检自测首次确认通道失效（FAIL）时额外推送 stun.verify_failed
 // 告警（仅通知中心，不触发 webhook/ESA）：按失效边沿触发，恢复后再次失效才会重新告警，避免连续失败周期刷屏。
 // 投递在通知中心的独立线程串行执行，渠道被删除或停用时跳过并记日志，不影响穿透与保活；
-// 每次投递写入 notify_log，可在「告警通知」页的最近发送记录中查看结果。
+// 每次投递写入 notify_log，可在「通知中心」页的最近发送记录中查看结果。
 
 import (
 	"encoding/json"
@@ -43,7 +43,7 @@ func notifyTrigger(task *core.Row, event string) {
 }
 
 // notifyTestSend 手动试发一次（任务列表操作列的「通知」按钮）：按当前勾选渠道投递一条测试通知，返回投递渠道数。
-// 投递在通知中心的独立线程异步执行，本函数只做勾选校验，结果由调用方提示用户去「告警通知」页查看发送记录。
+// 投递在通知中心的独立线程异步执行，本函数只做勾选校验，结果由调用方提示用户去「通知中心」页查看发送记录。
 func notifyTestSend(task *core.Row) (int, error) {
 	ids := parseChannelIds(strField(task, "notify_channels"))
 	if len(ids) == 0 {

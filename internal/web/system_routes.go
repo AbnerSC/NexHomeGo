@@ -32,12 +32,12 @@ var speedBlock = func() []byte {
 }()
 
 const (
-	speedTestDefaultMs   = int64(10_000)
-	speedDownMaxMs       = int64(60_000)
-	speedDownMaxBytes    = int64(16) << 30
-	speedDownMaxFixed    = int64(32) << 20
-	speedUpMaxMs         = int64(60_000)
-	speedLogWindowSec    = 120
+	speedTestDefaultMs = int64(10_000)
+	speedDownMaxMs     = int64(60_000)
+	speedDownMaxBytes  = int64(16) << 30
+	speedDownMaxFixed  = int64(32) << 20
+	speedUpMaxMs       = int64(60_000)
+	speedLogWindowSec  = 120
 )
 
 var pingBody = []byte{'P'}
@@ -221,7 +221,7 @@ func registerSystemRoutes() {
 		return nil
 	})
 
-	// 统一状态仪表盘（聚合各模块关键状态；各业务模块通过 RegisterDashboardSection 注册自己的分区）
+	// 统一状态仪表盘（聚合各模块关键状态；Docker / 反向代理等板块由模块注入 Provider 提供，见 dashboard.go）
 	Route("GET", "/api/dashboard", func(c *Ctx) error {
 		c.Ok(DashboardSummary())
 		return nil

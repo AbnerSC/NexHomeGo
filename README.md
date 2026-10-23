@@ -8,9 +8,9 @@ https://github.com/AbnerSC/NexHomeGo.git
 
 > 一站式内网节点守护工具，面向家庭 / 小型机房服务器，把内网能力安全对外打通。
 
-NexHome 是一款单进程、前后端一体化的轻量 Java 服务，内置 Web 服务器与 Web 管理界面，
+NexHome 是一款单进程、前后端一体化的轻量 Go 服务，内置 Web 服务器与 Web 管理界面，
 集成 **DDNS 域名同步、STUN 端口穿透、WOL 网络唤醒、SSL 证书自动申请续期、网站导航、Docker 容器管理与运维、服务可用性监控、统一告警通知、状态仪表盘** 等能力。
-只启动一个 Java 程序、只占用一个端口，配置与日志全部持久化在 SQLite（程序运行目录 `data/`）。
+只启动一个 Go 程序，面板默认仅占用一个端口（开启 HTTPS、反向代理或穿透任务时会额外监听对应端口），配置与日志全部持久化在 SQLite（程序运行目录 `data/`）。
 
 ---
 
@@ -38,7 +38,7 @@ services:
     ulimits:
       nofile: { soft: 65535, hard: 65535 }
     healthcheck:
-      # 镜像无 curl，改用 bash /dev/tcp 探测端口（仅验证端口可连）
+      # 探活方式用 bash /dev/tcp 探测端口（仅验证端口可连，不依赖额外工具）
       test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8090 && echo -n '' >&3"]
       interval: 10s
       timeout: 3s
@@ -65,7 +65,7 @@ docker compose up -d
 - 挂载 `/var/run/docker.sock` 后，「Docker 容器」模块即可查看宿主机上的容器与 Compose 项目；
   容器内进程需有 socket 读写权限（默认 root 满足，非 root 用户需将其加入宿主 `docker` 组对应的 gid）
 
-> 注意：运行镜像基于 eclipse-temurin，**不含 curl/wget**，healthcheck 切勿使用 `curl -f`，否则容器将始终处于 unhealthy。
+> 注意：运行镜像基于 debian:bookworm-slim，已内置 `curl`（未安装 `wget`）；healthcheck 可改用 `curl -f`，也可继续用上面的 bash /dev/tcp 写法。
 
 ## 二、功能简介
 
@@ -82,7 +82,7 @@ docker compose up -d
 - **服务/端口可用性监控**：HTTP/HTTPS、TCP、UDP 端口周期探测，故障与恢复自动告警。
 - **统一告警通知中心**：集中维护 Webhook / 邮件(SMTP) / 钉钉机器人渠道，监控故障、登录锁定等事件按启用渠道扇出推送；
   穿透任务等也可按任务自选多个渠道投递。
-- **统一状态仪表盘**：首页总览聚合 DDNS、STUN、证书到期倒计时、监控 UP/DOWN、Docker 概况与最近告警。
+- **统一状态仪表盘**：首页总览聚合系统运行状态、DDNS、STUN、证书到期倒计时、监控 UP/DOWN、Docker 概况、反向代理与近 7 天访问统计。
 - **配置备份导出**：一键下载数据库一致性快照（`VACUUM INTO`），用于离线备份与迁移（仅导出，不含导入恢复）。
 - **其他**：全模块操作日志、内置登录鉴权（失败锁定 + 单点登录）、异常统一捕获提示。
 
@@ -93,12 +93,12 @@ docker compose up -d
 3. **DDNS 同步报权限错误**：检查 AccessKey 权限策略是否包含对应产品的解析读写权限。
 4. **STUN 探测无响应**：更换 STUN 服务器（如 `stun.qq.com:3478`、`stun.miwifi.com:3478`），并确认本机可访问公网 UDP。
 5. **TCP 任务运行中但外网仍无法访问映射地址**：依次排查——① 探测 NAT 类型，对称型无法纯 STUN 穿透，改用路由器端口转发；
-   ② 受限锥形需填写「对端公网地址」由本端主动打洞，或在对端配合下互打；③ 确认主机防火墙已放行监听端口（Windows：允许 Java 通过专用/公用网络的入站规则）。
+   ② 受限锥形需填写「对端公网地址」由本端主动打洞，或在对端配合下互打；③ 确认主机防火墙已放行监听端口（Windows：允许 nexhome 通过专用/公用网络的入站规则）。
 6. **Docker 模块提示未连接**：容器部署需 `-v /var/run/docker.sock:/var/run/docker.sock` 挂载；
    报权限错误（Permission denied）说明容器内用户无 socket 读写权限；远程 Docker 检查 `DOCKER_HOST` 与网络连通性。
 
 ## 四、参与开发
-1. 启动入口：`src/main/java/com/nexhome/NexHomeApp.java`
+1. 启动入口：`cmd/nexhome/main.go`
 2. 登录密码：首次启动随机生成并打印到控制台，无内置固定密码（源码中的数据库文件`data/nexhome.db`用户密码：123456789012）
 
 ## 五、待办

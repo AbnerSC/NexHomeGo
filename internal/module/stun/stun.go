@@ -85,7 +85,7 @@ func RegisterRoutes() {
 		c.Ok(esaSyncNow(task))
 		return nil
 	})
-	// 手动试发一次通知：按任务勾选的渠道投递测试通知（异步投递，结果见「告警通知」页发送记录）
+	// 手动试发一次通知：按任务勾选的渠道投递测试通知（异步投递，结果见「通知中心」页发送记录）
 	web.Route("POST", "/api/stun/tasks/{id}/notify-test", func(c *web.Ctx) error {
 		task, err := mustGet(c.ParamLong("id"))
 		if err != nil {

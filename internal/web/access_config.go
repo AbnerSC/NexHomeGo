@@ -15,13 +15,13 @@ import (
 // HTTPS 证书复用「SSL 证书管理」已签发任务证书（PEM）：可指定任务，或在全部有效证书中自动挑选有效期最长的一张。
 
 const (
-	KeyPort           = "web.port"
-	KeyHTTPSEnabled   = "web.https.enabled"
-	KeyHTTPSPort      = "web.https.port"
-	KeyHTTPSRedirect  = "web.https.redirect"
-	KeyHTTPSCertTask  = "web.https.cert_task_id"
-	KeyEntry          = "web.entry"
-	KeyLastError      = "web.last_error"
+	KeyPort          = "web.port"
+	KeyHTTPSEnabled  = "web.https.enabled"
+	KeyHTTPSPort     = "web.https.port"
+	KeyHTTPSRedirect = "web.https.redirect"
+	KeyHTTPSCertTask = "web.https.cert_task_id"
+	KeyEntry         = "web.entry"
+	KeyLastError     = "web.last_error"
 )
 
 // Snapshot 一份完整的生效配置快照，进程内重启与回滚均以此为单位。
@@ -44,7 +44,7 @@ type CertInfo struct {
 	TLSConfig *tls.Config
 }
 
-// Load 读取生效配置（数据库优先，缺失项回退引导默认）。
+// LoadAccessConfig 读取生效配置（数据库优先，缺失项回退引导默认）。
 func LoadAccessConfig() (*Snapshot, error) {
 	port, err := core.GetConfig(KeyPort)
 	if err != nil {

@@ -384,7 +384,7 @@ func bytesToMB(b int64) float64 {
 
 func kbToMB(kb uint64) float64 { return round1(float64(kb) / 1024.0) }
 
-// MemTotalMB / MemUsedMB：供 /api/system/metrics（容器内以 /proc/meminfo 为准）。
+// memMetrics 汇总 CPU 与内存 / 交换分区指标，供 /api/system/metrics（容器内以 /proc/meminfo 为准）。
 func memMetrics() (cores int, cpu float64, memTotalMB, memUsedMB, swapTotalMB, swapUsedMB float64) {
 	cores = runtime.NumCPU()
 	cpu = CPUPct()
@@ -408,7 +408,7 @@ func memMetrics() (cores int, cpu float64, memTotalMB, memUsedMB, swapTotalMB, s
 	return
 }
 
-// procEnabled 判断当前是否可读 /proc（用于诊断页在本地开发环境标注数据源）。
+// procEnabled 判断当前是否可读 /proc（当前无调用方；诊断页的数据源判断见 internal/module/diag）。
 func procEnabled() bool {
 	if _, err := os.Stat(procBase); err != nil {
 		return false
