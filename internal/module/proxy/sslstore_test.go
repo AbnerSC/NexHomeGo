@@ -76,6 +76,17 @@ func insertTask(t *testing.T, name, domains, status, saveDir string) int64 {
 	return id
 }
 
+// insertTaskEmptySaveDir 插入 save_dir 为空的任务（模拟老库升级 ADD COLUMN 后的 NULL/空值行）。
+func insertTaskEmptySaveDir(t *testing.T, domains, status string) int64 {
+	t.Helper()
+	id, err := core.Insert(`INSERT INTO cert_task(name, provider, domains, challenge_type, status, save_dir)
+		VALUES(?,?,?,?,?,?)`, "老库任务", "LETSENCRYPT", domains, "DNS01", status, "")
+	if err != nil {
+		t.Fatalf("insert cert_task: %v", err)
+	}
+	return id
+}
+
 // TestSslReloadServesErrorTaskCert 续期失败（status=ERROR）但证书仍在有效期内的任务必须继续供证：
 // 否则证书库会变空，所有站点 HTTPS 握手被终止（线上表现为浏览器 ERR_CONNECTION_CLOSED）。
 func TestSslReloadServesErrorTaskCert(t *testing.T) {
@@ -143,6 +154,47 @@ func TestSslReloadSkipsExpired(t *testing.T) {
 	sslReload()
 	if got := sslCount(); got != 0 {
 		t.Fatalf("过期证书不应挂载, got %d", got)
+	}
+}
+
+// TestSslReloadDefaultsToDataSsl 老库 save_dir 为空/为 NULL、任务目录已丢失时，回退到默认保存目录 data/ssl。
+func TestSslReloadDefaultsToDataSsl(t *testing.T) {
+	setupTestDB(t)
+	insertTaskEmptySaveDir(t, "*.pi.example.com", "ERROR")
+	saveDir := filepath.Join(core.DataDir(), "ssl") // 与 cert 模块默认保存目录一致
+	writeSelfSigned(t, saveDir, "pi.example.com.key", "pi.example.com.fullchain.pem",
+		[]string{"*.pi.example.com", "pi.example.com"}, time.Now().Add(30*24*time.Hour))
+
+	sslReload()
+	if c, _ := forSNI("git.pi.example.com", nil); c == nil {
+		t.Fatal("save_dir 为 NULL 时应回退到默认 data/ssl")
+	}
+}
+
+// TestSslReloadScansBySAN 保存目录内文件名与当前域名列表不一致时，按证书 SAN 仍应识别。
+func TestSslReloadScansBySAN(t *testing.T) {
+	setupTestDB(t)
+	saveDir := t.TempDir()
+	writeSelfSigned(t, saveDir, "renamed.key", "renamed.fullchain.pem",
+		[]string{"m.other.com"}, time.Now().Add(30*24*time.Hour))
+	insertTask(t, "重命名副本", "m.other.com", "ERROR", saveDir)
+
+	sslReload()
+	if c, _ := forSNI("m.other.com", nil); c == nil {
+		t.Fatal("应按证书 SAN 识别同目录下的证书文件")
+	}
+}
+
+// TestSanCovers 通配语义：*.a.com 覆盖 x.a.com，不覆盖 a.com。
+func TestSanCovers(t *testing.T) {
+	if !sanCovers([]string{"*.a.com"}, []string{"x.a.com"}) {
+		t.Error("通配证书应覆盖子域")
+	}
+	if sanCovers([]string{"*.a.com"}, []string{"a.com"}) {
+		t.Error("通配证书不应覆盖主域")
+	}
+	if !sanCovers([]string{"b.example.com"}, []string{"B.Example.com"}) {
+		t.Error("域名比较应忽略大小写")
 	}
 }
 

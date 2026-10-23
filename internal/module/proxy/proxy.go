@@ -395,8 +395,9 @@ func validate(b map[string]interface{}) (*values, error) {
 		if task == nil {
 			return nil, core.NewBadRequest("证书任务不存在: #%d", tid)
 		}
-		if rowStr(task, "status") != "ISSUED" {
-			return nil, core.NewBadRequest("证书任务 #%d 尚未签发成功，无法用于 HTTPS", tid)
+		// 只要求证书文件可用且未过期：续期失败（ERROR）不影响上次签发的证书继续对外服务
+		if _, err := web.ResolveCertFile(int64(tid)); err != nil {
+			return nil, err
 		}
 		certTaskId = tid
 	}

@@ -56,14 +56,18 @@ func sslReload() {
 		return
 	}
 	now := time.Now()
+	skipped := 0
 	for _, t := range tasks {
 		id := int64Val(t.Get("id"))
 		e, err := loadCertEntry(t)
 		if err != nil {
 			core.LogWarn(core.LogProxy, fmt.Sprintf("证书任务 #%d 不可用于代理 HTTPS（已跳过）: %s", id, err.Error()))
+			skipped++
 			continue
 		}
 		if e.notAfter.Before(now) {
+			core.LogWarn(core.LogProxy, fmt.Sprintf("证书任务 #%d 证书已过期（%s），不挂载", id, e.notAfter.Format(time.RFC3339)))
+			skipped++
 			continue // 已过期不挂载
 		}
 		if _, dup := byTask[e.taskID]; dup {
@@ -82,7 +86,12 @@ func sslReload() {
 	sslDomain = domainMap
 	sslKeyPair = map[int64]*tls.Certificate{} // 证书变化 -> 懒构建缓存失效
 	sslMiss = map[string]bool{}
-	core.LogInfo(core.LogProxy, fmt.Sprintf("代理证书库已重载：%d 张有效证书，覆盖 %d 个域名", len(orders), len(domainMap)))
+	core.LogInfo(core.LogProxy, fmt.Sprintf("代理证书库已重载：%d 张有效证书，覆盖 %d 个域名（共 %d 个任务，跳过 %d）",
+		len(orders), len(domainMap), len(tasks), skipped))
+	if len(orders) == 0 {
+		core.LogWarn(core.LogProxy, "代理证书库为空：未找到可用证书文件，HTTPS 握手将被终止（请先签发证书，或确认 data/certs 与 "+
+			filepath.Join(core.DataDir(), "ssl")+" 下有完整三件套）")
+	}
 }
 
 func sslHasCert() bool {
@@ -224,9 +233,11 @@ func certTaskDir(taskID int64) string {
 // 查找顺序：
 //  1. 任务行 cert_dir（老库迁移后行内记录的绝对路径）；
 //  2. 默认布局 data/certs/task-{id}/；
-//  3. 任务保存目录 save_dir 中按域名命名的 {域名}.key + {域名}.fullchain.pem|{域名}.pem
-//     —— 任务目录丢失、只剩同步副本时的兜底，避免证书文件明确存在却无法识别。
+//  3. 保存目录副本：任务行 save_dir（老库可能为 NULL）-> 默认 data/ssl，
+//     先按域名命名的 {域名}.key + {域名}.fullchain.pem|{域名}.pem 精确查找，
+//     再扫描目录内证书按 SAN 匹配——避免「文件明确存在却无法识别」。
 func certFiles(task *core.Row) (keyFile, certFile string, err error) {
+	domains := splitDomains(strVal(task.Get("domains")))
 	dirs := make([]string, 0, 2)
 	if d := strings.TrimSpace(strVal(task.Get("cert_dir"))); d != "" {
 		dirs = append(dirs, d)
@@ -237,12 +248,22 @@ func certFiles(task *core.Row) (keyFile, certFile string, err error) {
 			return k, c, nil
 		}
 	}
+	saveDirs := make([]string, 0, 2)
 	if sd := strings.TrimSpace(strVal(task.Get("save_dir"))); sd != "" {
-		if k, c, ok := savedFiles(sd, splitDomains(strVal(task.Get("domains")))); ok {
+		saveDirs = append(saveDirs, sd)
+	}
+	if def := filepath.Join(core.DataDir(), "ssl"); len(saveDirs) == 0 || saveDirs[0] != def {
+		saveDirs = append(saveDirs, def) // 与 SSL 证书模块的默认保存目录一致
+	}
+	for _, dir := range saveDirs {
+		if k, c, ok := savedFiles(dir, domains); ok {
+			return k, c, nil
+		}
+		if k, c, ok := scanDirCert(dir, domains); ok {
 			return k, c, nil
 		}
 	}
-	return "", "", fmt.Errorf("证书文件缺失: %s", dirs[len(dirs)-1])
+	return "", "", fmt.Errorf("证书文件缺失（已查找 %s 与 %s）", dirs[len(dirs)-1], strings.Join(saveDirs, "、"))
 }
 
 // layoutFiles 标准布局探测：domain.key.pem + fullchain.pem（缺失回退 cert.pem）。
@@ -290,34 +311,67 @@ func splitDomains(s string) []string {
 	})
 }
 
-func buildKeyPair(keyFile, certFile string) (*tls.Certificate, error) {
-	keyPEM, err := readFileIfExists(keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("私钥文件缺失: %s", keyFile)
+// scanDirCert 在目录中扫描与任务域名匹配的证书文件：{任意名}.fullchain.pem|{任意名}.pem + 同名 .key，
+// 以叶子证书 SAN 判定归属（文件名与当前域名列表不一致时仍可识别）。
+func scanDirCert(dir string, domains []string) (string, string, bool) {
+	if len(domains) == 0 {
+		return "", "", false
 	}
-	certPEM, err := readFileIfExists(certFile)
-	if err != nil {
-		return nil, fmt.Errorf("证书文件缺失: %s", certFile)
+	for _, pattern := range []string{"*.fullchain.pem", "*.pem"} {
+		matches, err := filepath.Glob(filepath.Join(dir, pattern))
+		if err != nil {
+			return "", "", false
+		}
+		for _, certFile := range matches {
+			keyFile := filepath.Join(dir, savedBase(filepath.Base(certFile))+".key")
+			if _, err := readFileIfExists(keyFile); err != nil {
+				continue
+			}
+			certPEM, err := readFileIfExists(certFile)
+			if err != nil {
+				continue
+			}
+			leaf := parseLeaf(certPEM)
+			if leaf != nil && sanCovers(leaf.DNSNames, domains) {
+				return keyFile, certFile, true
+			}
+		}
 	}
-	kp, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, err
-	}
-	return &kp, nil
+	return "", "", false
 }
 
-// loadCertEntry 加载并解析单个任务的证书（叶子证书 SAN DNS 名单 + 到期时间）。
-func loadCertEntry(task *core.Row) (*certEntry, error) {
-	keyFile, certFile, err := certFiles(task)
-	if err != nil {
-		return nil, err
+// savedBase 保存目录命名反推：去掉 .fullchain.pem / .pem 后缀得到域名基名。
+func savedBase(name string) string {
+	name = strings.TrimSuffix(name, ".fullchain.pem")
+	return strings.TrimSuffix(name, ".pem")
+}
+
+// sanCovers 判断证书 SAN 是否覆盖任务域名（含 *. 通配，两侧均按通配语义判定）。
+func sanCovers(sans, want []string) bool {
+	for _, w := range want {
+		w = strings.ToLower(strings.TrimSpace(w))
+		if w == "" {
+			continue
+		}
+		for _, s := range sans {
+			s = strings.ToLower(strings.TrimSpace(s))
+			if s == w {
+				return true
+			}
+			if strings.HasPrefix(w, "*.") && strings.HasSuffix(s, w[1:]) {
+				return true
+			}
+			if strings.HasPrefix(s, "*.") && strings.HasSuffix(w, s[1:]) {
+				return true
+			}
+		}
 	}
-	certPEM, err := readFileIfExists(certFile)
-	if err != nil {
-		return nil, fmt.Errorf("证书文件缺失: %s", certFile)
-	}
-	var leaf *x509.Certificate
-	var first *x509.Certificate
+	return false
+}
+
+// parseLeaf 取证书链中的叶子证书（首个非 CA 证书；全为 CA 时取第一张）。
+func parseLeaf(certPEM []byte) *x509.Certificate {
+	var leaf, first *x509.Certificate
 	for rest := certPEM; ; {
 		b, r := pem.Decode(rest)
 		if b == nil {
@@ -347,6 +401,36 @@ func loadCertEntry(task *core.Row) (*certEntry, error) {
 	if leaf == nil {
 		leaf = first
 	}
+	return leaf
+}
+
+func buildKeyPair(keyFile, certFile string) (*tls.Certificate, error) {
+	keyPEM, err := readFileIfExists(keyFile)
+	if err != nil {
+		return nil, fmt.Errorf("私钥文件缺失: %s", keyFile)
+	}
+	certPEM, err := readFileIfExists(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("证书文件缺失: %s", certFile)
+	}
+	kp, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		return nil, err
+	}
+	return &kp, nil
+}
+
+// loadCertEntry 加载并解析单个任务的证书（叶子证书 SAN DNS 名单 + 到期时间）。
+func loadCertEntry(task *core.Row) (*certEntry, error) {
+	keyFile, certFile, err := certFiles(task)
+	if err != nil {
+		return nil, err
+	}
+	certPEM, err := readFileIfExists(certFile)
+	if err != nil {
+		return nil, fmt.Errorf("证书文件缺失: %s", certFile)
+	}
+	leaf := parseLeaf(certPEM)
 	if leaf == nil {
 		return nil, fmt.Errorf("证书文件中没有 X.509 证书")
 	}
