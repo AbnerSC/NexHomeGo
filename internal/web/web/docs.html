@@ -66,7 +66,8 @@
                         <tr><td>失败锁定</td><td>同一来源 IP 连续登录失败达到上限（默认 <b>3 次</b>）后，该 IP 临时锁定 <b>30 分钟</b>；成功登录后计数清零。阈值与时长可在「系统设置 → 登录安全设置」调整（次数 1~100，时长 1~1440 分钟）。失败计数为进程内存态，<b>重启进程后归零</b>。触发锁定时会向通知中心已启用渠道推送 <code>auth.lockout</code> 告警。</td></tr>
                         <tr><td>单点登录</td><td>系统强制单点登录：新设备登录会自动注销之前的会话，旧标签页再次请求将被踢回登录页。</td></tr>
                         <tr><td>会话有效期</td><td>登录后颁发的 Token 有效期 <b>24 小时</b>，过期后需重新登录。</td></tr>
-                        <tr><td>接口鉴权</td><td>除登录与登录状态检查外，所有 <code>/api/**</code> 接口都需携带 Token（请求头 <code>X-Token</code> 或查询参数 <code>token</code>）。</td></tr>
+                        <tr><td>接口鉴权</td><td>除登录与登录状态检查外，所有 <code>/api/**</code> 接口都需携带 Token（请求头 <code>X-Token</code> 或查询参数 <code>token</code>）。查询参数形式<b>仅对 GET / HEAD 生效</b>且响应带 <code>Cache-Control: no-store</code>（便于浏览器直接下载证书/备份，同时避免 Token 经地址栏与中间缓存外泄）；其余请求请使用请求头。</td></tr>
+                        <tr><td>锁定计数口径</td><td>失败次数按<b>TCP 直连对端地址</b>统计，不采信 <code>X-Forwarded-For</code> 等客户端自报头；否则每次换一个伪造 IP 即可无限次爆破。</td></tr>
                         </tbody>
                     </table>
                 </details>
@@ -714,7 +715,9 @@
                         <tr><td>启用代理</td><td>总开关，<b>默认关闭</b>。开启后才绑定端口。</td></tr>
                         <tr><td>HTTP 端口</td><td>默认 <b>80</b>（1~65535）。</td></tr>
                         <tr><td>HTTPS 端口</td><td>默认 <b>443</b>（1~65535）。</td></tr>
-                        <tr><td>解析真实来源 IP</td><td><b>默认开启</b>。前置代理/CDN 场景按 <code>X-Forwarded-For</code> / <code>X-Real-IP</code> / <code>CF-Connecting-IP</code> 解析访客真实 IP（影响访问统计与 IP 白名单）。<b>直连暴露且需以真实 socket 对端为准时关闭</b>（否则可被伪造头绕过白名单）。</td></tr>
+                        <tr><td>来源 IP 解析</td><td>取值优先级：<code>aliyun-esa-real-client-ip</code>（ESA 自定义回源头）→ <code>X-Forwarded-For</code>（取<b>链尾</b>，即最近一跳代理所见）→ <code>X-Real-IP</code> → <code>CF-Connecting-IP</code>；全部缺失时回退 TCP 对端地址。
+                            <br>但只有在直连对端<b>可信</b>时才采信这些头：<b>自动（默认）</b> = 对端为环回/内网，或命中下方「可信代理网段」；<b>关闭</b> = 从不采信；<b>始终</b> = 无条件采信（仅当源站已限制为只有回源代理可访问时才可）。
+                            <br>「可信代理网段」填回源代理的地址段（CIDR 或单 IP，逗号/空格分隔），<b>ESA 加速场景必填</b>——ESA 回源对端是公网地址，不填则「自动」认不出它是代理，会拿到回源节点 IP。该配置对面板与反向代理同时生效。这些请求头<b>完全由客户端自行声明</b>，无条件采信等于把 IP 白名单交给攻击者决定。</td></tr>
                         </tbody>
                     </table>
                     <p>保存后右侧实时显示监听结果：<b>已停用</b>（灰）/ <b>HTTP:端口</b>、<b>HTTPS:端口</b>（绿）/ <b>HTTP 未绑定</b>（红，常见为端口被占或无特权）/ <b>HTTPS 未监听</b>（橙，无可用证书）。页顶会常驻一条红色告警条展示最近一次代理错误；保存成功但存在降级时提示为「已应用，注意：…」。点「保存并应用」立即生效，无需重启面板。</p>
@@ -756,7 +759,7 @@
                     <ul>
                         <li><b>路径前缀剥离 stripPrefix</b> 与 <b>路径重写 from/to</b>：<b>语义上二选一</b>，代码会优先 stripPrefix，仅当 stripPrefix 为空且 from/to 都填写时才生效重写。</li>
                         <li><b>BasicAuth 用户/密码</b>：<b>只填用户不填密码则整个 BasicAuth 不生效</b>（收集时仅当用户非空才写入）。</li>
-                        <li><b>IP 白名单</b>：逗号分隔，支持<b>精确 IP</b>（<code>10.0.0.5</code>）或<b>以点结尾的网段前缀</b>（<code>192.168.1.</code>）；<b>留空 = 不限</b>。开启「解析真实来源 IP」时按转发头判定。</li>
+                        <li><b>IP 白名单</b>：逗号分隔，支持<b>精确 IP</b>（<code>10.0.0.5</code>）或<b>以点结尾的网段前缀</b>（<code>192.168.1.</code>）；<b>留空 = 不限</b>。判定所用的访客 IP 取决于「来源 IP」策略：自动时要求对端是内网代理或命中「可信代理网段」，也可显式设为“始终”。</li>
                         <li><b>后端 TLS 免校验</b>：后端为自签证书 https 时选「是」，否则保持「否」（默认不信任）。</li>
                     </ul>
                     <p><b>前端协议（浏览器 → 代理）</b></p>
@@ -1090,7 +1093,7 @@
                         <li>保持<b>失败锁定</b>开启（默认 3 次 / 30 分钟），并及时配置通知渠道以收到 <code>auth.lockout</code> 告警。</li>
                         <li>启用 <b>HTTPS</b>：先在 SSL 证书模块签发（HTTP01 需公网 80，否则用 DNS01），再在访问设置中开启。</li>
                         <li>不要把 Docker 能力当对外接口暴露：<code>docker.sock</code> 等于宿主 root，代理站点不要反代面板到不可信网络。</li>
-                        <li>代理直连公网且开启白名单 / BasicAuth 时，建议<b>关闭</b>「解析真实来源 IP」，避免伪造转发头绕过。</li>
+                        <li>代理直连公网且开启白名单 / BasicAuth 时，保持「来源 IP」为<b>自动</b>或<b>关闭</b>；只有当前置反代固定在可信地址（内网段，或已加入「可信代理网段」的 ESA/CDN 回源段）时才可能采信转发头，<b>不要为了省事设为“始终”</b>，否则伪造 XFF 即可绕过白名单。</li>
                     </ul>
                 </details>
             </section>

@@ -38,9 +38,11 @@ var (
 	engCfg   = engineCfg{enabled: false, httpPort: 80, httpsPort: 443}
 	sitesMu  sync.RWMutex
 	engSites []*Site
-	// trustRealIp 是否通过代理转发头解析访客真实来源 IP（XFF 首跳 / X-Real-IP / CF-Connecting-IP），
+	// realIPPolicy 转发头信任策略（never / auto / always，见 core.TrustProxyMode）：
 	// 供访问统计与 IP 白名单使用；回源追加的 XFF 链不受此开关影响，始终附加直连对端地址。
-	trustRealIp        = true
+	// 默认 auto：仅当直连对端为可信代理（环回/私网）时才采信转发头。
+	// 无条件采信会让任意客户端伪造 X-Forwarded-For 绕过 IP 白名单（已实测）。
+	realIPPolicy       = core.TrustProxyAuto
 	boundHttp    int32 = -1
 	boundHttps   int32 = -1
 	httpSrv      *http.Server
@@ -214,7 +216,10 @@ func listenView() *core.Row {
 	m.Set("boundHttp", boundHttpPort())
 	m.Set("boundHttps", boundHttpsPort())
 	m.Set("httpsActive", boundHttpsPort() > 0)
-	m.Set("trustRealIp", trustRealIp)
+	// trustRealIp 为旧版布尔字段（老前端仍有引用），realIpPolicy 为三态真值
+	m.Set("trustRealIp", realIPPolicy != core.TrustProxyNever)
+	m.Set("realIpPolicy", realIPPolicy)
+	m.Set("trustedProxies", core.TrustedProxiesRaw())
 	m.Set("certs", sslAPIView())
 	return m
 }
@@ -361,24 +366,17 @@ func routeMatch(host, path string) *Site {
 	return best
 }
 
-// resolveClientIp 解析访客真实来源 IP（访问统计 / IP 白名单用）：trustRealIp 开启时按
-// X-Forwarded-For 首跳 → X-Real-IP → CF-Connecting-IP 依次取值，全部为空回退直连对端地址；
-// 关闭时恒返回直连对端地址。仅用于「识别访客」；回源追加的 XFF 链另取直连对端 peerIp。
+// resolveClientIp 解析访客真实来源 IP（访问统计 / IP 白名单用）：仅在策略允许时按
+// aliyun-esa-real-client-ip（ESA 注入）→ X-Forwarded-For（链尾）→ X-Real-IP → CF-Connecting-IP 依次取值，
+// 全部缺失时回退直连对端地址。转发头由客户端完全可控，采信前必须确认直连对端本身可信
+// （环回/私网，或命中 security.trustedProxies 可信网段），否则伪造一个头就能绕过 IP 白名单。
+// 仅用于「识别访客」；回源追加的 XFF 链另取直连对端 peerIp。
 func resolveClientIp(r *http.Request, peerIp string) string {
-	if !trustRealIp || r == nil {
+	if r == nil || !core.TrustForwardedFromPolicy(peerIp, realIPPolicy) {
 		return peerIp
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); strings.TrimSpace(xff) != "" {
-		first := strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-		if first != "" {
-			return first
-		}
-	}
-	if real := r.Header.Get("X-Real-IP"); strings.TrimSpace(real) != "" {
-		return strings.TrimSpace(real)
-	}
-	if cf := r.Header.Get("CF-Connecting-IP"); strings.TrimSpace(cf) != "" {
-		return strings.TrimSpace(cf)
+	if ip := core.ClientIPFromHeaders(r.Header); ip != "" {
+		return ip
 	}
 	return peerIp
 }

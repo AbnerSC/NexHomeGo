@@ -2,9 +2,9 @@ package web
 
 import (
 	"io"
+	"net"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"NexHomeGo/internal/core"
 )
@@ -48,21 +48,32 @@ func (c *Ctx) Query(name string) string { return c.r.URL.Query().Get(name) }
 // Header 请求头，不存在返回 ""。
 func (c *Ctx) Header(name string) string { return c.r.Header.Get(name) }
 
-// ClientIP 客户端真实来源 IP：优先 X-Forwarded-For 首跳 / X-Real-IP，否则取连接对端。
+// PeerIP 连接对端地址（TCP 层，绝不可伪造）。用于登录锁定等安全控制的计数键与日志。
+func (c *Ctx) PeerIP() string {
+	host, _, err := net.SplitHostPort(c.r.RemoteAddr)
+	if err != nil {
+		host = c.r.RemoteAddr
+	}
+	if ip := core.SanitizeIP(host); ip != "" {
+		return ip
+	}
+	return "unknown"
+}
+
+// ClientIP 客户端来源 IP：仅当直连对端是可信代理（见 core.TrustForwardedFrom）时才采信请求头，
+// 优先级：aliyun-esa-real-client-ip（ESA 注入）→ X-Forwarded-For（链尾）→ X-Real-IP → CF-Connecting-IP；
+// 全部缺失时回退对端地址（局域网直连且浏览器不发头的情况）。
+// 转发头由客户端完全可控，无条件采信会让登录锁定、IP 白名单等基于来源地址的控制全部失效。
+// 注意：登录锁定计数另用 PeerIP，即使本方法被伪造也不影响锁定。
 func (c *Ctx) ClientIP() string {
-	if xff := c.r.Header.Get("X-Forwarded-For"); xff != "" {
-		if first := strings.TrimSpace(strings.Split(xff, ",")[0]); first != "" {
-			return first
-		}
+	peer := c.PeerIP()
+	if !core.TrustForwardedFrom(peer) {
+		return peer
 	}
-	if real := c.r.Header.Get("X-Real-IP"); strings.TrimSpace(real) != "" {
-		return strings.TrimSpace(real)
+	if ip := core.ClientIPFromHeaders(c.r.Header); ip != "" {
+		return ip
 	}
-	host := c.r.RemoteAddr
-	if i := strings.LastIndexByte(host, ':'); i >= 0 {
-		host = host[:i]
-	}
-	return host
+	return peer
 }
 
 // BodyText 读取请求体文本。

@@ -37,9 +37,15 @@ async function renderProxy() {
           </span>
           <span class="field-inline">HTTP 端口 <input name="httpPort" id="pxHttp" type="number" min="1" max="65535" placeholder="80"></span>
           <span class="field-inline">HTTPS 端口 <input name="httpsPort" id="pxHttps" type="number" min="1" max="65535" placeholder="443"></span>
-          <span class="inline-switch" title="前置代理/CDN 场景按 X-Forwarded-For / X-Real-IP / CF-Connecting-IP 解析访客真实来源 IP（用于访问统计与 IP 白名单）；直连暴露且需以真实 socket 对端为准时关闭">
-            <label class="switch"><input type="checkbox" id="pxRealIp"><span class="slider"></span></label>
-            <span class="muted small">解析真实来源 IP</span>
+          <span class="field-inline" title="X-Forwarded-For / X-Real-IP / aliyun-esa-real-client-ip 等头由客户端自行声明。自动：仅当直连对端是内网/环回代理或命中下方可信网段时才采信；关闭：始终以 TCP 对端地址为准；始终：无条件采信（仅当源站已限制为只有回源代理可访问时才可）">
+            来源 IP <select id="pxRealIp" style="padding:5px 8px">
+              <option value="auto">自动（仅信任内网代理/可信网段）</option>
+              <option value="never">关闭（仅用 TCP 对端）</option>
+              <option value="always">始终采信转发头</option>
+            </select>
+          </span>
+          <span class="field-inline" title="逗号或空格分隔的 CIDR / 单 IP。命中该网段的请求才会被当作可信代理，采信其转发头（含 ESA 注入的 aliyun-esa-real-client-ip）。ESA 回源场景填回源节点网段；面板访问同样生效">
+            可信代理网段 <input id="pxTrusted" style="width:260px" placeholder="如 192.168.0.0/16, 203.0.113.0/24">
           </span>
           <button class="btn primary" type="submit">保存并应用</button>
           <span id="pxListenStatus" class="small muted"></span>
@@ -87,7 +93,9 @@ async function refreshProxy() {
     $('#pxEnabled').checked = !!L.enabled;
     $('#pxHttp').value = L.httpPort || '';
     $('#pxHttps').value = L.httpsPort || '';
-    $('#pxRealIp').checked = L.trustRealIp !== false; // 默认开启
+    // 三态策略回填：旧后端只返回布尔 trustRealIp，按布尔值降级回 auto/never
+    $('#pxRealIp').value = L.realIpPolicy || (L.trustRealIp === false ? 'never' : 'auto');
+    $('#pxTrusted').value = L.trustedProxies || '';
     pxRenderListen(L);
     // 告警条
     const err = st.lastError || '';
@@ -158,7 +166,8 @@ window.pxSaveSettings = async e => {
         enabled: f.get('enabled') === 'on' || $('#pxEnabled').checked,
         httpPort: Number(f.get('httpPort') || 0),
         httpsPort: Number(f.get('httpsPort') || 0),
-        trustRealIp: $('#pxRealIp').checked
+        realIpPolicy: $('#pxRealIp').value,
+        trustedProxies: $('#pxTrusted').value
     };
     try {
         const r = await api('POST', '/api/proxy/settings', body);

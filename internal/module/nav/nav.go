@@ -257,6 +257,7 @@ func serveIconRoute(c *web.Ctx) error {
 		c.Fail(http.StatusNotFound, "图标不存在")
 		return nil
 	}
+	setUploadHeaders(c)
 	c.SetHeader("Cache-Control", "public, max-age=604800")
 	c.Raw(http.StatusOK, data, ctype)
 	return nil
@@ -279,8 +280,18 @@ func serveLocalImage(c *web.Ctx) error {
 		return nil
 	}
 	c.SetHeader("Cache-Control", "public, max-age=3600")
+	setUploadHeaders(c)
 	c.Raw(http.StatusOK, data, iconTypeOf(file))
 	return nil
+}
+
+// setUploadHeaders 用户上传文件直出时的安全头：
+// 图标/图片与面板同源，SVG 内嵌脚本可直接在本面板域内执行（存储型 XSS），
+// 因此禁止 MIME 猜测（nosniff）并用 CSP sandbox 剥离脚本能力（仅保留内联样式以正常渲染）。
+// 这些响应都作为 <img> 资源嵌入页面，sandbox 不影响图片正常显示。
+func setUploadHeaders(c *web.Ctx) {
+	c.SetHeader("X-Content-Type-Options", "nosniff")
+	c.SetHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 }
 
 // ---------- 校验与工具 ----------

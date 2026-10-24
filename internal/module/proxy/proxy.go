@@ -19,7 +19,8 @@ const (
 	keyEnabled   = "proxy.enabled"    // 全局开关（"1"=启用监听），默认关闭：关闭时不绑定任何端口
 	keyHTTPPort  = "proxy.http.port"  //
 	keyHTTPSPort = "proxy.https.port" //
-	// 是否通过代理转发头解析访客真实来源 IP（"0"=关闭，其余含缺省=开启）
+	// 访客真实来源 IP 的解析策略（never / auto / always）。
+	// 旧版为布尔值（"0"=关闭，其余=开启），读取时自动映射，写入统一为三态。
 	keyTrustRealIp = "proxy.realip.trust_header"
 	// 最近一次绑定/降级提示（页头告警条展示），空=正常
 	keyLastError = "proxy.last_error"
@@ -70,9 +71,9 @@ func Init() {
 	geoLoad() // IP 归属地离线库（ip2region xdb，外部可覆盖，均缺失时降级留空）
 	cacheInit(siteExists)
 	statsInit() // 访问记录周期落库（独立于监听开关，关停期间不丢已累积增量）
-	// 真实来源 IP 解析开关（默认开启）：读入内存供转发热路径直接取用，避免逐请求查库
+	// 真实来源 IP 解析策略（默认 auto）：读入内存供转发热路径直接取用，避免逐请求查库
 	if v, err := core.GetConfig(keyTrustRealIp); err == nil {
-		trustRealIp = v != "0"
+		realIPPolicy = parseRealIPPolicy(v)
 	}
 	if _, err := applyListener(); err != nil {
 		core.LogError(core.LogProxy, "启动代理监听失败: "+err.Error())
@@ -102,7 +103,9 @@ func getSettings(c *web.Ctx) error {
 		Set("enabled", cfg.enabled).
 		Set("httpPort", cfg.httpPort).
 		Set("httpsPort", cfg.httpsPort).
-		Set("trustRealIp", trustRealIp).
+		Set("realIpPolicy", realIPPolicy).
+		Set("trustRealIp", realIPPolicy != core.TrustProxyNever).
+		Set("trustedProxies", core.TrustedProxiesRaw()).
 		Set("lastError", orEmpty(last)))
 	return nil
 }
@@ -115,12 +118,32 @@ func saveSettings(c *web.Ctx) error {
 	if err := validatePorts(enabled, httpPort, httpsPort); err != nil {
 		return err
 	}
-	// 真实来源 IP 解析开关（独立于监听开关，无需重启即生效）
-	trust := core.BodyBool(b, "trustRealIp", trustRealIp)
-	if err := core.SetConfig(keyTrustRealIp, boolCfg(trust)); err != nil {
+	// 真实来源 IP 解析策略（独立于监听开关，无需重启即生效）。
+	// 优先读三态 realIpPolicy；缺失时兼容旧前端的布尔 trustRealIp（true→auto，false→never）。
+	policy := parseRealIPPolicy(core.BodyStr(b, "realIpPolicy"))
+	if _, ok := b["realIpPolicy"]; !ok {
+		if core.BodyBool(b, "trustRealIp", realIPPolicy != core.TrustProxyNever) {
+			policy = core.TrustProxyAuto
+		} else {
+			policy = core.TrustProxyNever
+		}
+	}
+	if err := core.SetConfig(keyTrustRealIp, policy); err != nil {
 		return err
 	}
-	trustRealIp = trust
+	realIPPolicy = policy
+	// 可信代理网段（与面板共用 security.trustedProxies）：ESA 回源段、内网反代段等。
+	// 仅当请求携带该字段时才改动，避免旧前端保存设置时误清空。
+	if _, ok := b["trustedProxies"]; ok {
+		norm, err := core.NormalizeCIDRList(core.BodyStr(b, "trustedProxies"))
+		if err != nil {
+			return core.NewBadRequest("%s", err.Error())
+		}
+		if err := core.SetConfig(core.KeyTrustedProxies, norm); err != nil {
+			return err
+		}
+		core.InvalidateTrustCache()
+	}
 	if err := core.SetConfig(keyEnabled, boolCfg(enabled)); err != nil {
 		return err
 	}
@@ -149,6 +172,23 @@ func saveSettings(c *web.Ctx) error {
 	r.Set("warning", warn)
 	c.Ok(r)
 	return nil
+}
+
+// parseRealIPPolicy 解析存储/请求中的策略值，无法识别的一律回退 auto（宁可少采信也不放行伪造来源）。
+//
+// 旧布尔值映射："0"（关闭）→ never；"1"（旧默认即无条件采信）→ auto。
+// 不能把 "1" 直接当 always：旧版默认就是 1，那样所有存量安装在升级后仍然裸信转发头，等于没修。
+// 确需无条件采信的 CDN 场景需显式选择 always。
+func parseRealIPPolicy(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "0", "false", core.TrustProxyNever:
+		return core.TrustProxyNever
+	case "1", "true":
+		return core.TrustProxyAuto
+	case core.TrustProxyAlways:
+		return core.TrustProxyAlways
+	}
+	return core.TrustProxyAuto
 }
 
 // validatePorts 端口校验：范围、两代理口不互撞、均不与面板端口冲突（面板端口见 core.Port()）。

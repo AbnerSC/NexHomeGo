@@ -58,7 +58,9 @@ func registerAuthRoutes() {
 		if strings.TrimSpace(password) == "" {
 			return core.NewBadRequest("密码不能为空")
 		}
-		ip := c.ClientIP()
+		// 失败计数与锁定只认 TCP 对端地址（c.PeerIP）：转发头由客户端自报，
+		// 若作为锁定键，攻击者每次换一个伪造 IP 即可无限制爆破。
+		ip := c.PeerIP()
 		if remain := auth.LockRemainingMs(ip); remain > 0 {
 			minutes := (remain + 59_999) / 60_000
 			c.Fail(http.StatusTooManyRequests, fmt.Sprintf("尝试过于频繁，已临时锁定，请约 %d 分钟后再试", minutes))

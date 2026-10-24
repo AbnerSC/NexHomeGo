@@ -193,12 +193,35 @@ func startInternal(selfHeal bool) error {
 	return fmt.Errorf("Web 服务启动失败，已尝试候选端口: %w", lastErr)
 }
 
+// ---------- 请求体积与超时 ----------
+
+// maxAPIBodyBytes 面板 API 请求体上限（默认 8 MB）。
+// 登录等免登录接口存在预认证读体，不设上限时单个超大请求即可把进程内存拉满（DoS）。
+// 流式测速上行（/api/system/speedtest/up）必须持续读取直到客户端结束，走白名单不套 MaxBytesReader。
+const maxAPIBodyBytes = 8 << 20
+
+// unboundedBodyPath 允许任意长度请求体的接口（流式测速上行）。
+func unboundedBodyPath(p string) bool {
+	return p == "/api/system/speedtest/up"
+}
+
+// setSecurityHeaders 统一安全响应头：阻止 MIME 嗅探、点击劫持与 Referer 泄漏 token。
+func setSecurityHeaders(w http.ResponseWriter) {
+	h := w.Header()
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("X-Frame-Options", "DENY")
+	h.Set("Referrer-Policy", "no-referrer")
+	h.Set("X-XSS-Protection", "0")
+}
+
 // launch 构建并启动一个 Web 实例（HTTP 监听器 + 可选 HTTPS 监听器），绑定失败返回错误。
 func launch(snap *Snapshot, https bool, cert *CertInfo, httpPort int, selfHeal bool) error {
 	httpSrv = &http.Server{
 		Addr:              net.JoinHostPort("", strconv.Itoa(httpPort)),
 		Handler:           http.HandlerFunc(serveHTTP),
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       120 * time.Second, // 整个请求（含请求体）读取上限，防慢速请求体长期占用连接（8MB 上限下允许最低 66KB/s）
+		IdleTimeout:       120 * time.Second, // 空闲长连接回收；写超时保持 0，兼容大文件下载与测速
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", httpPort))
 	if err != nil {
@@ -255,6 +278,8 @@ func mountHTTPS(httpsPort int, cert *CertInfo, selfHeal bool) error {
 		Handler:           http.HandlerFunc(serveHTTP),
 		TLSConfig:         tlsConf,
 		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       120 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	raw, err := net.Listen("tcp", fmt.Sprintf(":%d", httpsPort))
 	if err != nil {
@@ -329,6 +354,8 @@ func stopQuietly() {
 
 func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
+	// 安全响应头对所有面板响应（静态/接口/错误页）统一生效。
+	setSecurityHeaders(w)
 	entryOn := currentCfg != nil && currentCfg.Entry != ""
 	prefix := ""
 	if entryOn {
@@ -376,13 +403,28 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(innerPath, "/api/") &&
 		innerPath != "/api/auth/login" && innerPath != "/api/auth/check" {
 		token := r.Header.Get("X-Token")
-		if token == "" {
+		// 查询参数 token 仅为兼容浏览器链接直下（证书/备份下载）保留，且只允许只读方法，
+		// 避免写操作可通过拼接 URL 触发；未携带 token 的参数一律不再回落到 URL。
+		if token == "" && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			token = r.URL.Query().Get("token")
+			if token != "" {
+				w.Header().Set("Cache-Control", "no-store")
+			}
 		}
 		if !auth.Check(token) {
 			writeFail(w, http.StatusUnauthorized, "未登录或登录已过期")
 			return
 		}
+	}
+
+	// 请求体上限：免登录接口同样受限，防止单个超大请求耗尽内存。
+	if strings.HasPrefix(innerPath, "/api/") && !unboundedBodyPath(innerPath) {
+		if r.ContentLength > maxAPIBodyBytes {
+			writeFail(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("请求体过大（上限 %d MB）", maxAPIBodyBytes>>20))
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
 	}
 
 	// 业务路由匹配（innerPath）。

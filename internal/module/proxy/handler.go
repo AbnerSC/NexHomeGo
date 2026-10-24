@@ -42,8 +42,10 @@ func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 		query = uri[q+1:]
 	}
 	// 路径穿越防护只针对「段级 ..」（/a/../b）：段内含连续点（"a...b"、"..hidden"）不算，
-	// 避免误伤 Gitea compare 等合法业务路径
-	if hasDotDotSegment(path) {
+	// 避免误伤 Gitea compare 等合法业务路径。
+	// 必须同时检查原始 URI 与解码后的 Path：%2e%2e 这类编码形态在原始 URI 中没有字面量 ".."，
+	// 却能由后端或下游框架解码成上跳段（已实测可透传到后端）。
+	if hasDotDotSegment(path) || hasDotDotSegment(r.URL.Path) {
 		sendSimple(w, 400, "请求路径非法（包含 .. 上跳段）", "", "", false)
 		return
 	}
@@ -335,11 +337,11 @@ func serveCache(w http.ResponseWriter, r *http.Request, hit *cacheEntry, isH2 bo
 
 // ==================== 校验与工具 ====================
 
-// hasDotDotSegment 按 '/' 切分后是否存在恰好等于 ".." 的路径段
+// hasDotDotSegment 按路径分隔符（/ 与 \，后者兼容 Windows 后端）切分后是否存在恰好等于 ".." 的路径段
 func hasDotDotSegment(path string) bool {
 	start := 0
 	for start <= len(path) {
-		slash := strings.IndexByte(path[start:], '/')
+		slash := strings.IndexAny(path[start:], "/\\")
 		end := len(path)
 		if slash >= 0 {
 			end = start + slash

@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"fmt"
 	"math/big"
@@ -70,12 +71,13 @@ func Init() error {
 
 // Login 登录校验（含失败锁定与单点登录）。成功返回 token；密码错误返回空串。
 // 调用方应先经 LockRemainingMs 拦截锁定态。
+// ip 必须是连接对端地址（Ctx.PeerIP），不得使用客户端可伪造的转发头，否则本轮计数可被绕过。
 func Login(password, ip string) (string, error) {
 	hash, err := core.GetConfig(KeyPassword)
 	if err != nil {
 		return "", err
 	}
-	if hash != "" && strings.EqualFold(hash, sha256Hex(password)) {
+	if hash != "" && hashEqual(hash, sha256Hex(password)) {
 		token, err := randomHex(24)
 		if err != nil {
 			return "", err
@@ -172,7 +174,7 @@ func ChangePassword(oldPwd, newPwd string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if hash == "" || !strings.EqualFold(hash, sha256Hex(oldPwd)) {
+	if hash == "" || !hashEqual(hash, sha256Hex(oldPwd)) {
 		return false, nil
 	}
 	if err := core.SetConfig(KeyPassword, sha256Hex(newPwd)); err != nil {
@@ -231,6 +233,16 @@ func readIntConfig(key string, def, min, max int) (int, error) {
 func sha256Hex(text string) string {
 	sum := sha256.Sum256([]byte(text))
 	return hex.EncodeToString(sum[:])
+}
+
+// hashEqual 恒定时间比对两个十六进制哈希，避免按字节短路比较泄露前缀信息。
+func hashEqual(a, b string) bool {
+	a = strings.ToLower(strings.TrimSpace(a))
+	b = strings.ToLower(strings.TrimSpace(b))
+	if len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 // randomPassword 大小写字母 + 数字 + 特殊符号，各类至少一次，末尾打乱（字符集与 Java 完全一致）。
@@ -294,7 +306,7 @@ func randomHex(byteLen int) (string, error) {
 
 // ---------- 轻量辅助 ----------
 
-func itoa(i int) string       { return strconv.Itoa(i) }
+func itoa(i int) string          { return strconv.Itoa(i) }
 func atoi(s string) (int, error) { return strconv.Atoi(strings.TrimSpace(s)) }
 func ipStr(max, minutes int, ip string) string {
 	return fmt.Sprintf("IP %s 连续登录失败 %d 次，锁定 %d 分钟", ip, max, minutes)
