@@ -747,11 +747,37 @@ func danglingImages() ([]*core.Row, error) {
 	return list, nil
 }
 
+// danglingImageIDSet 悬空镜像 ID 集合（仅统计用，不读取层共享信息）；查询失败返回 nil。
+func danglingImageIDSet() map[string]bool {
+	filters := url.QueryEscape(`{"dangling":{"true":true}}`)
+	text, err := client.get("/images/json?all=1&filters=" + filters)
+	if err != nil {
+		return nil
+	}
+	arr, err := parseJSONArray(text)
+	if err != nil {
+		return nil
+	}
+	ids := make(map[string]bool, len(arr))
+	for _, el := range arr {
+		if id := asObj(el).str("Id"); id != "" {
+			ids[id] = true
+		}
+	}
+	return ids
+}
+
 // prune 资源清理：kind=images（悬空/未用镜像）或 containers（已停止容器），返回 Daemon 回收结果。
 func prune(b map[string]interface{}) (*core.Row, error) {
 	kind := strings.ToLower(strings.TrimSpace(core.BodyStr(b, "kind")))
 	if kind != "images" && kind != "containers" {
 		return nil, core.NewBadRequest("不支持的清理类型: %s（仅 images / containers）", kind)
+	}
+	// 镜像清理前记录悬空镜像 ID：ImagesDeleted 同时包含镜像本身与被删的层条目，
+	// 直接数条目会把层数量当镜像数量，故以清理前后悬空镜像差集统计实际删除个数。
+	var before map[string]bool
+	if kind == "images" {
+		before = danglingImageIDSet()
 	}
 	resp, err := client.post("/" + kind + "/prune")
 	if err != nil {
@@ -766,11 +792,22 @@ func prune(b map[string]interface{}) (*core.Row, error) {
 		deletedKey = "ImagesDeleted"
 	}
 	deleted := r.arr(deletedKey)
+	count := len(deleted) // 容器清理：ContainersDeleted 每项即一个容器
+	if kind == "images" && before != nil {
+		if after := danglingImageIDSet(); after != nil {
+			count = 0
+			for id := range before {
+				if !after[id] {
+					count++
+				}
+			}
+		}
+	}
 	out := core.NewRow().
 		Set("kind", kind).
 		Set("spaceReclaimed", r.long("SpaceReclaimed")).
-		Set("deletedCount", len(deleted))
-	core.LogInfo(core.LogDocker, "Docker 清理("+kind+")：删除 "+strconv.Itoa(len(deleted))+
+		Set("deletedCount", count)
+	core.LogInfo(core.LogDocker, "Docker 清理("+kind+")：删除 "+strconv.Itoa(count)+
 		" 项，回收 "+strconv.FormatInt(r.long("SpaceReclaimed")/1024/1024, 10)+" MB")
 	return out, nil
 }
