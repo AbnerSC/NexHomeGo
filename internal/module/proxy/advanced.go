@@ -30,6 +30,23 @@ var forbiddenHeaders = map[string]bool{
 // defaultCacheExtensions 默认缓存扩展名（静态资源类）。
 var defaultCacheExtensions = []string{"js", "css", "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "woff", "woff2", "ttf"}
 
+// defaultIndexFiles 静态站点默认首页文件名（按序探测）。
+var defaultIndexFiles = []string{"index.html", "index.htm"}
+
+// StaticOpts 静态站点发布选项（mode=STATIC 时生效），JSON 子对象 static。
+type StaticOpts struct {
+	// IndexFiles 首页文件候选名（目录请求按序探测，命中即返回）。
+	IndexFiles []string
+	// SPAFallback 前端路由回退：未命中的页面请求（Accept 含 text/html）返回首页文件。
+	SPAFallback bool
+	// DirListing 允许目录浏览（无首页文件的目录输出文件列表）；否则 404。
+	DirListing bool
+	// Precompressed 优先使用同名 .br / .gz 预压缩文件（需先自行 gzip/brotli 生成）。
+	Precompressed bool
+	// CacheControl 附加响应头 Cache-Control（空=不附加，仅靠 ETag/Last-Modified 协商缓存）。
+	CacheControl string
+}
+
 // Advanced 站点高级配置。
 type Advanced struct {
 	ReqHeaders  []HeaderOp
@@ -38,6 +55,8 @@ type Advanced struct {
 	PathRewriteFrom *string
 	PathRewriteTo   *string
 	StripPrefix     *string
+	// Static 静态站点发布选项（mode=STATIC 时生效）
+	Static          StaticOpts
 	ConnectSec      int
 	IdleSec         int
 	MaxBodyMB       int
@@ -72,6 +91,7 @@ func defaults() *Advanced {
 	return &Advanced{
 		ReqHeaders:             []HeaderOp{},
 		RespHeaders:            []HeaderOp{},
+		Static:                 StaticOpts{IndexFiles: defaultIndexFiles, Precompressed: true},
 		ConnectSec:             10,
 		IdleSec:                300,
 		MaxBodyMB:              0,
@@ -107,6 +127,8 @@ var (
 	controlCharRe = regexp.MustCompile(`[\x00-\x1f\x7f]`)
 	ipAllowBadRe  = regexp.MustCompile(`[\s,]`)
 	maxAgeRe      = regexp.MustCompile(`max-age\s*=\s*(\d+)`)
+	// indexFileRe 首页文件名：纯文件名（不含目录分隔符），不得以点开头（避开隐藏文件）。
+	indexFileRe = regexp.MustCompile(`^[A-Za-z0-9_$][A-Za-z0-9._$-]{0,63}$`)
 )
 
 // parseAdvanced 解析并校验 advanced JSON；非法输入返回 error（文案对齐 Java，由管理接口映射为 400）。
@@ -251,6 +273,36 @@ func parseAdvanced(text string) (*Advanced, error) {
 		return nil, err
 	}
 
+	if el, isNull := objGet(o, "static"); el != nil && !isNull {
+		s, ok := el.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("static 必须是 JSON 对象")
+		}
+		if iel, inNull := objGet(s, "indexFiles"); iel != nil && !inNull {
+			arr, ok := iel.([]interface{})
+			if !ok {
+				return nil, fmt.Errorf("static.indexFiles 必须是 JSON 数组")
+			}
+			idx := []string{}
+			for _, e := range arr {
+				v := strings.TrimSpace(strOf(e))
+				if !indexFileRe.MatchString(v) {
+					return nil, fmt.Errorf("static.indexFiles 条目非法（应为纯文件名，如 index.html）: %s", v)
+				}
+				idx = append(idx, v)
+			}
+			a.Static.IndexFiles = idx
+		}
+		a.Static.SPAFallback = core.BodyBool(s, "spaFallback", a.Static.SPAFallback)
+		a.Static.DirListing = core.BodyBool(s, "dirListing", a.Static.DirListing)
+		a.Static.Precompressed = core.BodyBool(s, "precompressed", a.Static.Precompressed)
+		if cc := strings.TrimSpace(core.BodyStr(s, "cacheControl")); cc != "" {
+			if strings.ContainsAny(cc, "\r\n") || len(cc) > 200 {
+				return nil, fmt.Errorf("static.cacheControl 不能含换行且不超过 200 字符: %s", cc)
+			}
+			a.Static.CacheControl = cc
+		}
+	}
 	if el, isNull := objGet(o, "cache"); el != nil && !isNull {
 		c, ok := el.(map[string]interface{})
 		if !ok {
@@ -300,6 +352,12 @@ func (a *Advanced) ToJson() *core.Row {
 		o.Set("stripPrefix", *a.StripPrefix)
 	}
 	o.Set("timeout", core.NewRow().Set("connectSec", a.ConnectSec).Set("idleSec", a.IdleSec))
+	o.Set("static", core.NewRow().
+		Set("indexFiles", stringListJson(a.Static.IndexFiles)).
+		Set("spaFallback", a.Static.SPAFallback).
+		Set("dirListing", a.Static.DirListing).
+		Set("precompressed", a.Static.Precompressed).
+		Set("cacheControl", a.Static.CacheControl))
 	o.Set("maxBodyMB", a.MaxBodyMB)
 	o.Set("rateLimitRps", gsonFloat(a.RateLimitRps))
 	o.Set("basicAuth", core.NewRow().Set("user", a.AuthUser).Set("pass", a.AuthPass))
@@ -335,6 +393,15 @@ func headerOpsToJson(ops []HeaderOp) []interface{} {
 	arr := make([]interface{}, 0, len(ops))
 	for _, h := range ops {
 		arr = append(arr, core.NewRow().Set("op", h.Op).Set("name", h.Name).Set("value", h.Value))
+	}
+	return arr
+}
+
+// stringListJson 字符串切片 -> JSON 数组（回写用，空切片输出 [] 而非 null）。
+func stringListJson(list []string) []interface{} {
+	arr := make([]interface{}, 0, len(list))
+	for _, v := range list {
+		arr = append(arr, v)
 	}
 	return arr
 }

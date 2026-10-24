@@ -21,10 +21,11 @@ function pxCertBadge(expIso) {
 
 async function renderProxy() {
     $('#pageBody').innerHTML = `
-      <div class="tip">反向代理中心：独立监听端口对外提供 <b>HTTP/1.1 + HTTP/2</b> 反向代理，
-        按 <b>域名 + 路径前缀</b> 路由到内后端；HTTPS 依据 <b>SNI</b> 自动匹配「SSL 证书」模块已签发的证书，
-        证书续期后自动热加载。支持 WebSocket 透传、强制 HTTPS、IP 白名单、BasicAuth、限流与
-        <b>nginx 风格磁盘文件缓存</b>。默认监听 <b>80 / 443</b>，功能默认<b>关闭</b>，开启后面板其余流量不受影响。</div>
+      <div class="tip">代理中心：独立监听端口对外提供 <b>HTTP/1.1 + HTTP/2</b>，每个站点按 <b>域名 + 路径前缀</b> 匹配，
+        可选用两种发布方式：<b>反向代理</b>（转发到内网后端）或 <b>静态站点</b>（直接发布本地目录，免后端）。
+        HTTPS 依据 <b>SNI</b> 自动匹配「SSL 证书」模块已签发的证书，证书续期后自动热加载。
+        支持 WebSocket 透传、强制 HTTPS、IP 白名单、BasicAuth、限流与 <b>nginx 风格磁盘文件缓存</b>。
+        默认监听 <b>80 / 443</b>，功能默认<b>关闭</b>，开启后面板其余流量不受影响。</div>
 
       <div id="proxyAlert"></div>
 
@@ -71,7 +72,7 @@ async function renderProxy() {
         <thead><tr>
           <th style="width:250px">站点</th>
           <th>域名 / 路径</th>
-          <th style="width: 400px">后端</th>
+          <th style="width: 400px">后端 / 站点目录</th>
           <th style="width:80px">证书</th>
           <th style="width:130px">流量 / 错误</th>
           <th style="width:80px">启用</th>
@@ -139,11 +140,12 @@ async function refreshProxyRows(preferedStatus) {
     tbody.innerHTML = sites.map(s => {
         const m = sm[s.id] || {};
         const cert = s.cert_mode === 'TASK' ? '指定' : s.cert_mode === 'NONE' ? 'HTTP' : '自动';
+        const isStatic = (s.mode || 'REVERSE') === 'STATIC';
         return `<tr>
-          <td>${esc(s.name)}</td>
+          <td>${esc(s.name)}${isStatic ? ' ' + badge('静态', 'gray') : ''}</td>
           <td class="small" style="word-break:break-all">${esc(s.domains)}
             ${s.paths ? `<div class="muted">路径 ${esc(s.paths)}</div>` : ''}</td>
-          <td class="docker-mono small" style="word-break:break-all">${esc(s.target)}</td>
+          <td class="docker-mono small" style="word-break:break-all">${isStatic ? '📁 ' : ''}${esc(s.target)}</td>
           <td class="small">${cert}${s.force_https ? '<div class="muted">强跳</div>' : ''}</td>
           <td class="small">${m.active ? '活跃 ' + m.active + ' · ' : ''}${(m.qpm || 0) + ' 次/分'}
             ${(m.errors || 0) > 0 ? `<div class="small" style="color:var(--red)">${m.errors} 错误</div>` : ''}
@@ -205,16 +207,21 @@ let _px = null;
 
 window.pxForm = async (id) => {
     const certs = await api('GET', '/api/proxy/certs');
+    // 后端默认值：高级配置 + 静态站点默认目录（data/html）与 zip 上传上限
+    const def = await api('GET', '/api/proxy/defaults').catch(() => ({}));
     let site, adv;
     if (id) {
         site = (await api('GET', '/api/proxy/sites')).find(x => x.id === id);
         try { adv = site.advanced ? JSON.parse(site.advanced) : {}; } catch (e) { adv = {}; }
     } else {
-        site = { name: '', domains: '', paths: '', target: '', force_https: 0, cert_mode: 'AUTO', cert_task_id: null, enabled: 1 };
-        const d = await api('GET', '/api/proxy/defaults');
-        adv = d.advanced || {};
+        site = { name: '', mode: 'REVERSE', domains: '', paths: '', target: '', force_https: 0, cert_mode: 'AUTO', cert_task_id: null, enabled: 1 };
+        adv = def.advanced || {};
     }
-    _px = { id, site, adv, certs };
+    _px = {
+        id, site, adv, certs, upload: null,
+        staticRoot: def.staticRoot || 'data/html',
+        uploadMaxMB: def.uploadMaxMB || 512
+    };
 
     modal(id ? '编辑代理站点' : '新增代理站点', `
       <div class="px-tabs">
@@ -226,15 +233,28 @@ window.pxForm = async (id) => {
       <form id="pxFormEl">
         <div class="px-pane" data-tab="basic">
           <div class="field"><label>站点名称 <b>*</b></label><input name="name" required value="${esc(site.name || '')}"></div>
+          <div class="field"><label>站点类型</label>
+            <select name="mode" id="pxMode" onchange="pxModeChanged()">
+              ${[['REVERSE', '反向代理（转发到后端）'], ['STATIC', '静态站点（发布本地目录）']].map(([v, label]) =>
+                    `<option value="${v}" ${(site.mode || 'REVERSE') === v ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
+            <div class="small muted">静态站点由代理直接读取并对外提供磁盘文件，无需任何后端进程。</div></div>
           <div class="field full"><label>匹配域名 <b>*</b></label>
             <input name="domains" required value="${esc(site.domains || '')}" placeholder="a.example.com, *.example.com">
             <div class="small muted">逗号分隔，支持 <b>*.example.com</b> 通配（同时匹配 example.com 本身）。</div></div>
           <div class="field full"><label>路径前缀</label>
             <input name="paths" value="${esc(site.paths || '')}" placeholder="/api, /portal（留空=整域名）">
             <div class="small muted">仅这些前缀走本站点；留空表示该域名全部路径。</div></div>
-          <div class="field full"><label>后端地址 <b>*</b></label>
-            <input name="target" required value="${esc(site.target || '')}" placeholder="http://127.0.0.1:3000 或 https://192.168.1.10:8443/base">
-            <div class="small muted">http(s)://host:port，可带路径前缀作为回源基础路径。</div></div>
+          <div class="field full"><label id="pxTargetLabel">后端地址 <b>*</b></label>
+            <input name="target" id="pxTarget" required value="${esc(site.target || '')}" placeholder="http://127.0.0.1:3000 或 https://192.168.1.10:8443/base">
+            <div class="small muted" id="pxTargetHint">http(s)://host:port，可带路径前缀作为回源基础路径。</div></div>
+          <div class="field full px-static"><label>网站文件压缩包（可选）</label>
+            <div class="px-zip">
+              <button type="button" class="btn small" id="pxZipBtn">选择 zip 并上传</button>
+              <input type="file" id="pxZipFile" accept=".zip,application/zip" hidden>
+              <span class="small muted" id="pxZipInfo">未选择压缩包</span>
+            </div>
+            <div class="small muted">压缩包先暂存到 <code>data/html/temp/</code>，保存站点时自动解压到站点目录并删除压缩包；同名文件覆盖，既有文件保留。</div></div>
           <div class="field"><label>证书模式</label>
             <select name="cert_mode" id="pxCertMode" onchange="pxCertModeChanged()">
               ${['AUTO', 'TASK', 'NONE'].map(v => `<option value="${v}" ${site.cert_mode === v ? 'selected' : ''}>${
@@ -262,34 +282,48 @@ window.pxForm = async (id) => {
           <div class="field"><label>BasicAuth 用户</label><input id="aAuthUser" autocomplete="off"></div>
           <div class="field"><label>BasicAuth 密码</label><input id="aAuthPass" type="password" autocomplete="new-password"></div>
           <div class="field full"><label>IP 白名单</label><input id="aIpAllow" placeholder="192.168.1., 10.0.0.5（精确 IP 或以点结尾的网段前缀，逗号分隔，留空=不限）"></div>
-          <div class="field"><label>后端 TLS 免校验（自签 https 后端）</label>
+          <div class="field px-rev"><label>后端 TLS 免校验（自签 https 后端）</label>
             <select id="aInsecure"><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field px-static"><label>首页文件（目录请求）</label>
+            <input id="sIndex" placeholder="index.html, index.htm">
+            <div class="small muted">逗号分隔，按序探测，命中即返回。</div></div>
+          <div class="field px-static"><label>SPA 前端路由回退</label>
+            <select id="sSpa"><option value="false">关闭</option><option value="true">开启（未命中的页面请求返回首页）</option></select>
+            <div class="small muted">仅对 Accept 含 text/html 的页面请求生效，资源请求仍返回 404。</div></div>
+          <div class="field px-static"><label>目录浏览（autoindex）</label>
+            <select id="sListing"><option value="false">关闭（无首页文件时 404）</option><option value="true">开启（输出文件列表）</option></select></div>
+          <div class="field px-static"><label>预压缩文件优先</label>
+            <select id="sPre"><option value="true">开启（优先 .br / .gz 同名文件）</option><option value="false">关闭</option></select>
+            <div class="small muted">需先在站点目录里自行生成 xxx.js.br / xxx.js.gz。</div></div>
+          <div class="field px-static"><label>Cache-Control</label>
+            <input id="sCache" placeholder="public, max-age=3600（留空=不设置）">
+            <div class="small muted">留空则只靠 ETag / Last-Modified 协商缓存。</div></div>
           <div class="field"><label>前端协议（浏览器 → 代理）</label>
             <select id="aFrontProto"><option value="h2">HTTP/2（默认）</option><option value="http1">HTTP/1.1（关闭 h2）</option></select></div>
           <div class="small muted full">h2 是信用制流控：浏览器给每条流的窗口从 64KB 起步、按其观测的 BDP 自调，
             单流下载速率会被钉在「窗口 / 往返」。大文件下载型站点若跑不满带宽可改 <b>HTTP/1.1</b>
             （socket 缓冲由内核自调，无这层额度；实测经代理吞吐高于 h2）。仅影响 HTTPS 的 ALPN 通告，
             明文端口的 h2c prior-knowledge 不受此项约束。</div>
-          <div class="field full adv-cache-title"><b>回源协议 / HTTP/2</b></div>
-          <div class="field"><label>回源协议</label>
+          <div class="field full adv-cache-title px-rev"><b>回源协议 / HTTP/2</b></div>
+          <div class="field px-rev"><label>回源协议</label>
             <select id="aBackendProto"><option value="http1">HTTP/1.1</option><option value="h2">HTTP/2（h2c / ALPN h2）</option></select></div>
-          <div class="field"><label>h2 单连接并发流上限</label><input id="aH2Streams" type="number" min="1" max="1000"></div>
-          <div class="field"><label>h2 后端连接上限</label><input id="aH2Conns" type="number" min="1" max="1024"></div>
-          <div class="small muted full">选 <b>HTTP/2</b> 时：明文后端走 h2c prior-knowledge，https 后端经 ALPN 协商 h2（协商不到 h2 直接报 502，不静默降级）；
+          <div class="field px-rev"><label>h2 单连接并发流上限</label><input id="aH2Streams" type="number" min="1" max="1000"></div>
+          <div class="field px-rev"><label>h2 后端连接上限</label><input id="aH2Conns" type="number" min="1" max="1024"></div>
+          <div class="small muted full px-rev">选 <b>HTTP/2</b> 时：明文后端走 h2c prior-knowledge，https 后端经 ALPN 协商 h2（协商不到 h2 直接报 502，不静默降级）；
             一条后端连接并发承载多事务，只开关流不重建连接，可显著降低后端 fd 消耗。
             此模式忽略下方「回源连接池」的开关（空闲回收秒数仍用于 h2 连接），且不支持 Upgrade/WebSocket 与 HTTP/1.1 前端的 gRPC。</div>
-          <div class="field full adv-cache-title"><b>回源长连接（upstream keepalive）</b></div>
-          <div class="field"><label>启用回源连接池</label>
+          <div class="field full adv-cache-title px-rev"><b>回源长连接（upstream keepalive）</b></div>
+          <div class="field px-rev"><label>启用回源连接池</label>
             <select id="aUpstreamKa"><option value="true">启用（复用空闲连接）</option><option value="false">关闭（每请求短连接）</option></select></div>
-          <div class="field"><label>空闲连接回收（秒）</label><input id="aUpstreamIdle" type="number" min="1" max="3600"></div>
-          <div class="field"><label>每后端空闲连接上限</label><input id="aUpstreamMax" type="number" min="1" max="4096"></div>
-          <div class="small muted full">对 <b>https 回源</b> 与 <b>跨主机后端</b> 收益明显（省去每请求 TLS/TCP 建连）；纯 localhost HTTP 后端收益有限，可按需开启。</div>
-          <div class="field full adv-cache-title"><b>文件缓存</b></div>
-          <div class="field"><label>启用缓存</label><select id="cEnabled"><option value="true">是</option><option value="false">否</option></select></div>
-          <div class="field"><label>缓存时长（秒）</label><input id="cTtl" type="number" min="1"></div>
-          <div class="field"><label>单文件上限（MB）</label><input id="cMaxItem" type="number" min="1"></div>
-          <div class="field"><label>站点容量上限（MB）</label><input id="cMax" type="number" min="1"></div>
-          <div class="field full"><label>缓存扩展名</label><input id="cExt" placeholder="js, css, png, jpg, woff2（逗号分隔）"></div>
+          <div class="field px-rev"><label>空闲连接回收（秒）</label><input id="aUpstreamIdle" type="number" min="1" max="3600"></div>
+          <div class="field px-rev"><label>每后端空闲连接上限</label><input id="aUpstreamMax" type="number" min="1" max="4096"></div>
+          <div class="small muted full px-rev">对 <b>https 回源</b> 与 <b>跨主机后端</b> 收益明显（省去每请求 TLS/TCP 建连）；纯 localhost HTTP 后端收益有限，可按需开启。</div>
+          <div class="field full adv-cache-title px-rev"><b>文件缓存</b></div>
+          <div class="field px-rev"><label>启用缓存</label><select id="cEnabled"><option value="true">是</option><option value="false">否</option></select></div>
+          <div class="field px-rev"><label>缓存时长（秒）</label><input id="cTtl" type="number" min="1"></div>
+          <div class="field px-rev"><label>单文件上限（MB）</label><input id="cMaxItem" type="number" min="1"></div>
+          <div class="field px-rev"><label>站点容量上限（MB）</label><input id="cMax" type="number" min="1"></div>
+          <div class="field full px-rev"><label>缓存扩展名</label><input id="cExt" placeholder="js, css, png, jpg, woff2（逗号分隔）"></div>
           <div class="small muted full">请求/响应头改写（reqHeaders/respHeaders）等进阶项请在「自定义 JSON」页编辑，切换页签会自动同步。</div>
         </div>
 
@@ -308,6 +342,15 @@ window.pxForm = async (id) => {
     pxFillAdvControls();
     $('.px-pane[data-tab="basic"]').classList.remove('hidden');
     pxCertModeChanged();
+    pxModeChanged();
+
+    // 静态站点 zip 上传：先暂存到 data/html/temp，保存时由后端解压到站点目录
+    $('#pxZipBtn').addEventListener('click', () => $('#pxZipFile').click());
+    $('#pxZipFile').addEventListener('change', e => {
+        const file = e.target.files[0];
+        e.target.value = '';   // 清空以允许重复选择同一文件
+        if (file) pxUploadZip(file);
+    });
 
     // 页签切换：adv <-> json 双向同步
     $$('.px-tab').forEach(t => t.addEventListener('click', () => {
@@ -327,6 +370,7 @@ window.pxForm = async (id) => {
         const f = new FormData(e.target);
         const body = {
             name: (f.get('name') || '').trim(),
+            mode: f.get('mode') || 'REVERSE',
             domains: (f.get('domains') || '').trim(),
             paths: (f.get('paths') || '').trim(),
             target: (f.get('target') || '').trim(),
@@ -337,6 +381,7 @@ window.pxForm = async (id) => {
             advanced: _px.adv
         };
         try {
+            if (body.mode === 'STATIC' && _px.upload) body.uploadToken = _px.upload.token;
             if (id) await api('PUT', '/api/proxy/sites/' + id, body);
             else await api('POST', '/api/proxy/sites', body);
             closeModal(); toast('保存成功'); refreshProxyRows();
@@ -349,9 +394,70 @@ window.pxCertModeChanged = () => {
     $('#pxCertTaskField').classList.toggle('hidden', m !== 'TASK');
 };
 
+/** 上传静态站点 zip：XHR 取进度，成功后记住凭据（保存时随表单提交 uploadToken） */
+function pxUploadZip(file) {
+    const info = $('#pxZipInfo');
+    if (!/\.zip$/i.test(file.name)) { toast('仅支持 .zip 压缩包', 'err'); return; }
+    const maxMB = _px.uploadMaxMB || 512;
+    if (file.size > maxMB * 1024 * 1024) { toast(`压缩包不能超过 ${maxMB} MB`, 'err'); return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', API_BASE + '/api/proxy/sites/upload');
+    xhr.setRequestHeader('X-Token', TOKEN);
+    if (info) info.textContent = '上传中… 0%';
+    $('#pxZipBtn').disabled = true;
+    xhr.upload.onprogress = ev => {
+        if (info && ev.lengthComputable) info.textContent = `上传中… ${Math.round(ev.loaded / ev.total * 100)}%`;
+    };
+    xhr.onload = () => {
+        $('#pxZipBtn').disabled = false;
+        let d = {};
+        try { d = JSON.parse(xhr.responseText); } catch (e) { /* 非 JSON 响应 */ }
+        if (!d.ok) {
+            if (xhr.status === 401) { TOKEN = ''; localStorage.removeItem('nx_token'); showLogin(); }
+            if (info) info.textContent = '未选择压缩包';
+            toast(d.error || ('上传失败 ' + xhr.status), 'err');
+            return;
+        }
+        _px.upload = d.data;
+        const mb = (d.data.size / 1048576).toFixed(1);
+        if (info) info.innerHTML = `已上传：<b>${esc(d.data.name)}</b>（${mb} MB），保存站点时自动解压`;
+        toast('压缩包已上传，保存站点后解压');
+    };
+    xhr.onerror = () => {
+        $('#pxZipBtn').disabled = false;
+        if (info) info.textContent = '未选择压缩包';
+        toast('上传失败：网络错误', 'err');
+    };
+    xhr.send(fd);
+}
+
+/** 站点类型切换：证书/域名等两模式共用，仅目标字段语义与回源专属高级项不同 */
+window.pxModeChanged = () => {
+    const isStatic = ($('#pxMode') && $('#pxMode').value) === 'STATIC';
+    $$('.px-pane').forEach(p => { p.dataset.mode = isStatic ? 'STATIC' : 'REVERSE'; });
+    if ($('#pxTargetLabel')) $('#pxTargetLabel').innerHTML = isStatic ? '站点目录' : '后端地址 <b>*</b>';
+    const root = (_px && _px.staticRoot) || 'data/html';
+    if ($('#pxTarget')) {
+        // 静态站点目录可留空（后端自动用并创建默认目录），反向代理必须填后端地址
+        $('#pxTarget').required = !isStatic;
+        $('#pxTarget').placeholder = isStatic
+            ? `留空=默认目录 ${root}/{id}（自动创建）`
+            : 'http://127.0.0.1:3000 或 https://192.168.1.10:8443/base';
+        // 从反向代理切到静态站点时，清掉形如 http(s):// 的后端地址，避免被当成站点目录
+        if (isStatic && /^https?:\/\//i.test($('#pxTarget').value.trim())) $('#pxTarget').value = '';
+    }
+    if ($('#pxTargetHint')) {
+        $('#pxTargetHint').innerHTML = isStatic
+            ? `留空即使用 <code>${esc(root)}/{id}</code>（保存时自动创建）；也可手填已存在的绝对路径（如只读挂载的 /srv/www）。`
+            : 'http(s)://host:port，可带路径前缀作为回源基础路径。';
+    }
+};
+
 /** 把 _px.adv 拆到结构化控件（缺省用后端默认值语义） */
 function pxFillAdvControls() {
-    const a = _px.adv, t = a.timeout || {}, c = a.cache || {}, ba = a.basicAuth || {}, rw = a.pathRewrite || {};
+    const a = _px.adv, t = a.timeout || {}, c = a.cache || {}, ba = a.basicAuth || {}, rw = a.pathRewrite || {}, st = a.static || {};
     $('#aConnect').value = t.connectSec ?? 10;
     $('#aIdle').value = t.idleSec ?? 300;
     $('#aMaxBody').value = a.maxBodyMB ?? 0;
@@ -375,6 +481,11 @@ function pxFillAdvControls() {
     $('#cMaxItem').value = c.maxItemMB ?? 8;
     $('#cMax').value = c.maxMB ?? 256;
     $('#cExt').value = (c.extensions || []).join(', ');
+    $('#sIndex').value = (st.indexFiles || ['index.html', 'index.htm']).join(', ');
+    $('#sSpa').value = String(!!st.spaFallback);
+    $('#sListing').value = String(!!st.dirListing);
+    $('#sPre').value = st.precompressed === false ? 'false' : 'true';
+    $('#sCache').value = st.cacheControl || '';
 }
 
 /** 结构化控件值写回 _px.adv（保留未覆盖字段如 reqHeaders/respHeaders） */
@@ -410,6 +521,14 @@ function pxReadAdvControls() {
         maxMB: num($('#cMax').value) || 256,
         respectUpstream: (a.cache && a.cache.respectUpstream !== false),
         extensions: csv($('#cExt').value)
+    };
+    const idx = csv($('#sIndex').value);
+    a.static = {
+        indexFiles: idx.length ? idx : ['index.html', 'index.htm'],
+        spaFallback: $('#sSpa').value === 'true',
+        dirListing: $('#sListing').value === 'true',
+        precompressed: $('#sPre').value === 'true',
+        cacheControl: $('#sCache').value.trim()
     };
 }
 

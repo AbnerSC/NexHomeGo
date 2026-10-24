@@ -49,6 +49,14 @@ func sendErrorPage(w http.ResponseWriter, status int, detail, hint string, keepA
 func buildErrorPageHTML(status int, detail, hint string) string {
 	var title, desc, defHint string
 	switch status {
+	case 404:
+		title = "文件不存在"
+		desc = "站点目录下未找到该路径对应的文件。"
+		defHint = "请确认文件已上传到站点目录，且路径大小写与磁盘一致。"
+	case 405:
+		title = "请求方法不支持"
+		desc = "静态站点只对外提供文件读取。"
+		defHint = "请使用 GET 或 HEAD 请求。"
 	case 504:
 		title = "网关超时"
 		desc = "后端服务未在规定时间内返回响应。"

@@ -200,9 +200,21 @@ func startInternal(selfHeal bool) error {
 // 流式测速上行（/api/system/speedtest/up）必须持续读取直到客户端结束，走白名单不套 MaxBytesReader。
 const maxAPIBodyBytes = 8 << 20
 
+// maxUploadBodyBytes 静态站点 zip 上传接口的请求体上限（与 proxy 侧 maxUploadBytes 保持一致，512 MB）。
+// 站点包动辄几十上百 MB，复用 8 MB 上限会让上传一律 413。
+const maxUploadBodyBytes = 512 << 20
+
 // unboundedBodyPath 允许任意长度请求体的接口（流式测速上行）。
 func unboundedBodyPath(p string) bool {
 	return p == "/api/system/speedtest/up"
+}
+
+// apiBodyLimit 按接口给出请求体上限：zip 上传单独放宽，其余接口仍为 8 MB。
+func apiBodyLimit(p string) int64 {
+	if p == "/api/proxy/sites/upload" {
+		return maxUploadBodyBytes
+	}
+	return maxAPIBodyBytes
 }
 
 // setSecurityHeaders 统一安全响应头：阻止 MIME 嗅探、点击劫持与 Referer 泄漏 token。
@@ -417,14 +429,20 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 请求体上限：免登录接口同样受限，防止单个超大请求耗尽内存。
+	// 请求体上限：免登录接口同样受限，防止单个超大请求耗尽内存（zip 上传接口单独放宽）。
 	if strings.HasPrefix(innerPath, "/api/") && !unboundedBodyPath(innerPath) {
-		if r.ContentLength > maxAPIBodyBytes {
+		limit := apiBodyLimit(innerPath)
+		if innerPath == "/api/proxy/sites/upload" {
+			// 站点包可达数百 MB：全局 ReadTimeout（120 秒）会在慢速链路上误杀上传，
+			// 按接口放宽连接读截止时间（读取结束即回归正常，不影响其他接口）。
+			_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(30 * time.Minute))
+		}
+		if r.ContentLength > limit {
 			writeFail(w, http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("请求体过大（上限 %d MB）", maxAPIBodyBytes>>20))
+				fmt.Sprintf("请求体过大（上限 %d MB）", limit>>20))
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
 	// 业务路由匹配（innerPath）。

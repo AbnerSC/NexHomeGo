@@ -101,6 +101,12 @@ func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 		return
 	}
 
+	// 静态站点发布：不经后端，直接对外提供站点目录文件（仅 GET/HEAD）
+	if site.Mode == ModeStatic {
+		serveStatic(w, r, site, path, query, st)
+		return
+	}
+
 	upath := upstreamPath(site, path, query)
 
 	// WebSocket 等 Upgrade 请求：原始字节隧道（仅 HTTP/1.1）

@@ -3,6 +3,8 @@ package proxy
 import (
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -14,21 +16,40 @@ import (
 // 路由匹配语义对齐 nginx server_name / location 前缀：
 // domains 支持 *.example.com 通配（同时匹配 example.com 本身与任意子域）；
 // paths 为逗号分隔的路径前缀，空 = 该域名全部路径。
-
+//
+// 站点分两种发布方式（对齐 nginx 的 proxy_pass 与 root 两种用法）：
+// REVERSE 回源到后端地址，STATIC 直接对外发布本地目录（静态站点，免后端）。
 type Site struct {
 	ID          int64
 	Name        string
+	Mode        string // ModeReverse / ModeStatic
 	Domains     []string
 	Paths       []string
 	Scheme      string
 	BackendHost string
 	BackendPort int
 	BasePath    string
+	RootDir     string // Mode=STATIC 时生效：站点目录（绝对路径、正斜杠形态）
 	ForceHttps  bool
 	CertMode    string
 	CertTaskID  int64
 	Adv         *Advanced
 	Enabled     bool
+}
+
+const (
+	// ModeReverse 反向代理到后端（默认，存量站点语义不变）。
+	ModeReverse = "REVERSE"
+	// ModeStatic 静态站点发布：直接对外提供本地目录中的文件，不经过任何后端。
+	ModeStatic = "STATIC"
+)
+
+// parseMode 站点类型归一：空/无法识别一律回退 REVERSE（存量行为优先，避免升级后站点整站失联）。
+func parseMode(v string) string {
+	if strings.EqualFold(strings.TrimSpace(v), ModeStatic) {
+		return ModeStatic
+	}
+	return ModeReverse
 }
 
 // loadAll 从数据库加载全部站点（单行解析失败仅告警跳过，不阻塞其他站点）。
@@ -63,6 +84,7 @@ func siteOf(row *core.Row) (*Site, error) {
 	s := &Site{
 		ID:         int64Val(row.Get("id")),
 		Name:       rowStr(row, "name"),
+		Mode:       parseMode(rowStr(row, "mode")),
 		Domains:    splitList(rowStr(row, "domains")),
 		Paths:      splitList(rowStr(row, "paths")),
 		ForceHttps: intVal(row.Get("force_https")) == 1,
@@ -72,6 +94,11 @@ func siteOf(row *core.Row) (*Site, error) {
 	}
 	if s.CertMode = rowStr(row, "cert_mode"); s.CertMode == "" {
 		s.CertMode = "AUTO"
+	}
+	if s.Mode == ModeStatic {
+		// 加载期只校验路径形态：目录可能挂载在临时不可达的设备上，此时仍保留站点，
+		// 由请求期返回可读的错误页，而不是整站从路由表消失（表现为 404 未配置站点）。
+		return withStaticRoot(s, rowStr(row, "target"), false)
 	}
 	return withTarget(s, rowStr(row, "target"))
 }
@@ -130,6 +157,45 @@ func withTarget(s *Site, target string) (*Site, error) {
 func validateTarget(target string) error {
 	_, err := withTarget(&Site{CertMode: "AUTO", Adv: defaults()}, target)
 	return err
+}
+
+// withStaticRoot 解析静态站点目录（创建/更新站点与加载时校验）。
+// 存储统一为「绝对路径 + 正斜杠」，请求期再用 filepath.FromSlash 还原平台分隔符。
+// checkExists 仅在保存时置真：把「目录打错/未挂载」在保存这一刻暴露出来，
+// 加载期则宽容处理，避免目录临时不可达导致站点整站从路由表消失。
+func withStaticRoot(s *Site, target string, checkExists bool) (*Site, error) {
+	root, err := staticRootDir(target, checkExists)
+	if err != nil {
+		return nil, err
+	}
+	r := *s
+	r.RootDir = root
+	return &r, nil
+}
+
+// staticRootDir 站点目录规范化与校验。
+func staticRootDir(target string, checkExists bool) (string, error) {
+	v := strings.TrimSpace(target)
+	if v == "" {
+		return "", fmt.Errorf("静态站点目录不能为空")
+	}
+	if strings.ContainsAny(v, "\r\n\x00") {
+		return "", fmt.Errorf("静态站点目录不能含换行/控制字符: %s", v)
+	}
+	p := filepath.Clean(filepath.FromSlash(v))
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("静态站点目录必须是绝对路径（如 /var/www/site 或 D:/www/site）: %s", v)
+	}
+	if checkExists {
+		st, err := os.Stat(p)
+		if err != nil {
+			return "", fmt.Errorf("静态站点目录不存在或不可读: %s", v)
+		}
+		if !st.IsDir() {
+			return "", fmt.Errorf("静态站点目录不是文件夹: %s", v)
+		}
+	}
+	return filepath.ToSlash(p), nil
 }
 
 // validateDomains 域名合法性校验（创建/更新接口用）。

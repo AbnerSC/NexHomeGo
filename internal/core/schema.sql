@@ -187,16 +187,20 @@ CREATE TABLE IF NOT EXISTS nav_item (
 );
 
 -- 反向代理站点表（代理中心：类 nginx 的内置 HTTP 反代，独立端口监听，开关与端口见 app_config proxy.*）
+-- mode       : REVERSE=反向代理到后端（默认） / STATIC=静态站点发布（直接对外提供本地目录文件）
 -- domains    : Host 匹配列表，逗号分隔，支持 *.example.com 通配
 -- paths      : 路径前缀匹配列表，逗号分隔；空 = 整域名全部路径
--- target     : 后端地址 http(s)://host:port[/路径前缀]，带路径时作为回源路径改写的前缀
+-- target     : mode=REVERSE 为后端地址 http(s)://host:port[/路径前缀]，带路径时作为回源路径改写的前缀；
+--              mode=STATIC 为站点目录绝对路径（如 /var/www/site 或 D:/www/site）
 -- force_https: 1 时 HTTP 请求 301 跳转到 https://同域名
 -- cert_mode  : AUTO=SNI 自动匹配已签发证书 / TASK=指定证书任务 / NONE=仅 HTTP 不接 TLS
 -- advanced   : 高级配置 JSON（请求/响应头改写、路径重写、超时、限流、BasicAuth、
---               IP 白名单、后端 TLS 校验开关、文件缓存等，字段语义见 proxy/advanced.go 文件头注释与 Advanced 结构体）
+--               IP 白名单、后端 TLS 校验开关、文件缓存、静态站点发布选项等，
+--               字段语义见 proxy/advanced.go 文件头注释与 Advanced 结构体）
 CREATE TABLE IF NOT EXISTS proxy_site (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     name         TEXT NOT NULL,
+    mode         TEXT NOT NULL DEFAULT 'REVERSE',
     domains      TEXT NOT NULL,
     paths        TEXT,
     target       TEXT NOT NULL,

@@ -85,7 +85,7 @@
                         <tr><td>🔔 通知中心</td><td>Webhook / 邮件 / 钉钉渠道集中维护</td><td><a href="#sec-notify">第 7 章</a></td></tr>
                         <tr><td>⚡ WOL 唤醒</td><td>局域网魔术包唤醒主机</td><td><a href="#sec-wol">第 8 章</a></td></tr>
                         <tr><td>🔐 SSL 证书</td><td>证书申请、自动续期、下载</td><td><a href="#sec-cert">第 9 章</a></td></tr>
-                        <tr><td>🔀 代理中心</td><td>反向代理、SNI 证书、缓存与统计</td><td><a href="#sec-proxy">第 10 章</a></td></tr>
+                        <tr><td>🔀 代理中心</td><td>反向代理、静态站点发布、SNI 证书、缓存与统计</td><td><a href="#sec-proxy">第 10 章</a></td></tr>
                         <tr><td>🐳 Docker 容器</td><td>容器观测与起停运维</td><td><a href="#sec-docker">第 11 章</a></td></tr>
                         <tr><td>📋 操作日志</td><td>全模块运行日志检索</td><td><a href="#sec-logs">第 12 章</a></td></tr>
                         <tr><td>🩺 内存诊断</td><td>内存分解、跳变点与日志关联分析</td><td><a href="#sec-diag">第 13 章</a></td></tr>
@@ -701,10 +701,10 @@
             </section>
 
             <section class="doc-sec" id="sec-proxy">
-                <h2>10. 代理中心（反向代理）</h2>
+                <h2>10. 代理中心（反向代理 / 静态站点）</h2>
                 <details class="doc-sub-sec" open>
                     <summary><h3>10.1 总体能力</h3></summary>
-                    <p>独立监听端口的反向代理，对外提供 <b>HTTP/1.1 + HTTP/2</b>，按<b>域名 + 路径前缀</b>路由到内网后端。HTTPS 依据 <b>SNI</b> 自动匹配「SSL 证书」模块已签发的证书，<b>证书续期后自动热加载</b>。支持 WebSocket 透传、强制 HTTPS、IP 白名单、BasicAuth、限流与 <b>nginx 风格磁盘文件缓存</b>。</p>
+                    <p>独立监听端口的代理服务，对外提供 <b>HTTP/1.1 + HTTP/2</b>，按<b>域名 + 路径前缀</b>匹配站点。每个站点可选两种发布方式：<b>反向代理</b>（转发到内网后端）或 <b>静态站点</b>（直接发布本地目录，免后端，适合纯静态官网 / 前端构建产物 / 文件分发）。HTTPS 依据 <b>SNI</b> 自动匹配「SSL 证书」模块已签发的证书，<b>证书续期后自动热加载</b>。支持 WebSocket 透传、强制 HTTPS、IP 白名单、BasicAuth、限流与 <b>nginx 风格磁盘文件缓存</b>。</p>
                     <p>默认监听 <b>80 / 443</b>；功能默认<b>关闭</b>，开启后面板其余业务（非代理）流量不受影响。面板数据每 <b>8 秒</b>自动刷新。</p>
                 </details>
                 <details class="doc-sub-sec">
@@ -732,16 +732,17 @@
                         <thead><tr><th style="width:190px">字段</th><th style="width:80px">必填</th><th>说明</th></tr></thead>
                         <tbody>
                         <tr><td>站点名称</td><td>是</td><td>列表展示用。</td></tr>
+                        <tr><td>站点类型</td><td>—</td><td><b>反向代理</b>（默认，转发到后端）/ <b>静态站点</b>（直接发布本地目录）。切换后下方目标字段的语义与「高级配置」中的可用项随之变化（见 10.8）。</td></tr>
                         <tr><td>匹配域名</td><td>是</td><td>逗号分隔，支持 <b><code>*.example.com</code> 通配（同时匹配 example.com 本身）</b>。</td></tr>
                         <tr><td>路径前缀</td><td>—</td><td>如 <code>/api, /portal</code>；<b>留空 = 整域名全部路径</b>。</td></tr>
-                        <tr><td>后端地址</td><td>是</td><td><code>http(s)://host:port</code>，<b>可带路径前缀作为回源基础路径</b>，如 <code>https://192.168.1.10:8443/base</code>。</td></tr>
+                        <tr><td>后端地址</td><td>是</td><td>反向代理时填 <code>http(s)://host:port</code>，<b>可带路径前缀作为回源基础路径</b>，如 <code>https://192.168.1.10:8443/base</code>；<b>静态站点</b>时改为填<b>站点目录的绝对路径</b>（如 <code>D:/www/site</code> 或 <code>/var/www/site</code>，保存时校验目录必须存在）。</td></tr>
                         <tr><td>证书模式</td><td>—</td><td><b>AUTO</b>（自动，按 SNI 匹配，默认）/ <b>TASK</b>（指定证书任务）/ <b>NONE</b>（仅 HTTP，不接 TLS）。</td></tr>
                         <tr><td>指定证书任务</td><td>—</td><td>仅证书模式为「指定」时显示，下拉列出已签发证书（名称 + 域名）。</td></tr>
                         <tr><td>强制 HTTPS 跳转</td><td>—</td><td>是：HTTP 请求返回 <b>301</b> 到 https；默认否。</td></tr>
                         <tr><td>启用站点</td><td>—</td><td>停用后不再匹配路由。</td></tr>
                         </tbody>
                     </table>
-                    <p>站点列表列：站点、域名/路径、后端、证书（自动/指定/HTTP，强跳时标注「强跳」）、<b>流量/错误</b>（活跃连接、次/分、错误数、最近错误）、启用开关、操作（编辑 / 删除）。删除站点时<b>会一并清理其磁盘缓存</b>。</p>
+                    <p>站点列表列：站点、域名/路径、<b>后端 / 站点目录</b>（静态站点带「静态」徽章与 📁 前缀）、证书（自动/指定/HTTP，强跳时标注「强跳」）、<b>流量/错误</b>（活跃连接、次/分、错误数、最近错误）、启用开关、操作（编辑 / 删除）。删除站点时<b>会一并清理其磁盘缓存</b>。</p>
                 </details>
                 <details class="doc-sub-sec">
                     <summary><h3>10.5 站点：高级配置页签</h3></summary>
@@ -810,6 +811,37 @@
                 <details class="doc-sub-sec">
                     <summary><h3>10.7 访问统计</h3></summary>
                     <p>代理会为每个站点记录访问流水，包括每日总访问次数、<b>网站访问 TOP10</b> 与基于内置 ip2region 库的<b>来源地区 TOP10</b>，展示在「<a href="#sec-dashboard">总览仪表盘</a>」的最近 7 天统计区。未启用代理或未配站点时该区为空。</p>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>10.8 静态站点发布（默认目录 / zip 上传）</h3></summary>
+                    <p>把「站点类型」选为 <b>静态站点</b>，代理就<b>不再回源任何后端</b>，而是直接读取站点目录里的文件对外提供——相当于内置一个 nginx 的 <code>root</code>，适合发布纯静态官网、Vue/React 构建产物、下载站等。<b>站点目录留空即使用默认目录 <code>data/html/{id}</code></b>（容器内 <code>/app/data/html/{id}</code>，保存时自动创建），可直接在弹窗里<b>上传 zip 由后端解压</b>，也可自行用 rsync / Git / 挂载卷同步文件。</p>
+                    <table>
+                        <thead><tr><th style="width:210px">字段</th><th style="width:130px">默认</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>站点目录</td><td>data/html/{id}</td><td><b>可留空</b>：留空即使用默认目录 <code>data/html/{id}</code>（容器内 <code>/app/data/html/{id}</code>），保存时自动创建，删除站点时自动清理（<b>仅限默认目录</b>）。手填时必须是面板进程可直接读取的<b>绝对路径</b>（如 <code>D:/www/site</code> 或 <code>/var/www</code>）：保存时校验存在，用于尽早发现路径写错/卷未挂载；运行期目录消失则返回 <b>503</b> 并给出可读原因。</td></tr>
+                        <tr><td>首页文件</td><td>index.html, index.htm</td><td>目录请求时按序探测，命中第一个存在的文件即返回；文件名须为纯文件名（不含目录分隔符）。</td></tr>
+                        <tr><td>SPA 前端路由回退</td><td>关闭</td><td>开启后，<b>Accept 含 text/html 的未命中请求</b>返回首页文件（状态 200），让 history 路由的 <code>/user/42</code> 这类虚拟路径可直达与刷新；资源请求（JS/CSS/图片）未命中仍返回 404。</td></tr>
+                        <tr><td>目录浏览（autoindex）</td><td>关闭</td><td>开启后，无首页文件的目录输出文件列表（目录在前、按名排序、目录带尾斜杠）；关闭则 404。</td></tr>
+                        <tr><td>预压缩文件优先</td><td>开启</td><td>客户端 <code>Accept-Encoding</code> 支持时优先交付同名 <code>.br</code>（次选 <code>.gz</code>）文件，并自动加 <code>Content-Encoding</code> 与 <code>Vary: Accept-Encoding</code>。需你自行生成压缩件，如 <code>gzip -k assets/app.js</code>。带 <code>Range</code> 的请求始终交付原文件。</td></tr>
+                        <tr><td>Cache-Control</td><td>空</td><td>附加到所有静态响应的缓存策略（如 <code>public, max-age=3600</code>）；留空则不设置，仅靠 <code>Last-Modified</code> 协商缓存。</td></tr>
+                        </tbody>
+                    </table>
+                    <p><b>路径映射</b>：URL 路径直接对应站点目录内的文件路径；「路径前缀」限定该站点匹配的 URL 范围，「路径前缀剥离 stripPrefix」/「路径重写」则在查文件前去掉或改写前缀（如把 <code>/portal</code> 发布到目录根）。</p>
+                    <ul>
+                        <li><b>支持</b>：Range 断点续传（206）、<code>If-Modified-Since</code> 协商缓存（304）、<code>HEAD</code>、目录补尾斜杠 301、按扩展名自动判定 MIME。</li>
+                        <li><b>只读</b>：仅接受 <code>GET</code> / <code>HEAD</code>，其余方法返回 <b>405</b>，不提供上传/删除等写能力。</li>
+                        <li><b>访问控制</b>：IP 白名单、BasicAuth、限流、强制 HTTPS、证书模式与反向代理站点完全一致（在进入文件交付前生效）。</li>
+                        <li><b>安全边界</b>：路径逐段校验，<code>..</code> 上跳段、盘符或反斜杠、<b>隐藏文件</b>（<code>.git</code> / <code>.env</code> / <code>.htpasswd</code> 等，仅放行 <code>.well-known</code>）一律 404；目录内指向外部的<b>符号链接</b>同样按越界处理。</li>
+                        <li><b>磁盘缓存</b>不参与静态站点（文件本身就在磁盘上），「文件缓存 / 回源协议 / 回源长连接 / 后端 TLS 免校验」等回源专属项在选静态站点时不显示。</li>
+                    </ul>
+                    <p><b>上传 zip 发布</b>：保存前点「选择 zip 并上传」，压缩包先流式落到 <code>data/html/temp/&lt;随机串&gt;.zip</code>（不压内存、不落系统临时目录），返回一次性上传凭据；点「保存站点」时后端把它解压到站点目录（默认目录场景即 <code>data/html/{id}</code>），<b>解压完成立即删除压缩包</b>。要点：</p>
+                    <ul>
+                        <li><b>覆盖规则</b>：同名文件覆盖、既有文件保留，便于增量发布；想彻底重来请先删除站点（默认目录随之清理）再新建。</li>
+                        <li><b>压缩包结构</b>：全部条目同属一个顶层目录时自动剥离该层（直接压缩 <code>dist</code> 文件夹也能正确发布）；自动跳过 <code>__MACOSX</code>、<code>.DS_Store</code>、<code>._*</code> 等 macOS 打包垃圾。</li>
+                        <li><b>安全限制</b>：单个压缩包 ≤ <b>512 MB</b>；解压后 ≤ 20000 个文件、总大小 ≤ 2 GB、单文件 ≤ 512 MB；绝对路径、盘符、<code>..</code> 上跳段与符号链接条目一律拒绝（zip-slip 防护）。</li>
+                        <li><b>清理</b>：上传后未保存的压缩包超过 <b>1 小时</b>由后台周期任务清理，启动时也会清理上次遗留，不会长期占用磁盘。</li>
+                    </ul>
+                    <div class="doc-note tip"><b>部署提示</b>用默认目录时压缩包与解压结果都写进 <code>data</code> 数据卷（<code>-v /srv/nexhome/data:/app/data</code>），无需额外挂载；若想发布宿主机上已有的大目录，则把它<b>以只读方式挂载进容器</b>（如 <code>-v /srv/www:/www:ro</code>）并把「站点目录」填为容器内路径（<code>/www</code>），此后删除站点不会动这个自填目录。</div>
                 </details>
             </section>
 

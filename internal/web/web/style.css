@@ -1490,3 +1490,9 @@ th.docker-sort:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
 .px-pane.hidden { display: none; }
 .px-pane .full { grid-column: 1 / -1; }
 .px-pane .adv-cache-title { grid-column: 1 / -1; margin-top: 8px; padding-top: 10px; border-top: 1px dashed var(--border); }
+/* 高级配置按站点类型显隐：.px-rev 仅反向代理用，.px-static 仅静态站点发布用（data-mode 由 proxy.js 切换） */
+.px-pane[data-mode="STATIC"] .px-rev { display: none; }
+.px-pane[data-mode="REVERSE"] .px-static { display: none; }
+/* 静态站点 zip 上传行：按钮 + 上传进度/文件名一行排布 */
+.px-zip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.px-zip .small { flex: 1 1 220px; }

@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +34,9 @@ var certModes = map[string]bool{"AUTO": true, "TASK": true, "NONE": true}
 
 // RegisterRoutes 注册 REST 接口。
 func RegisterRoutes() {
+	// 旧库升级：proxy_site 补充 mode 列（新库建表脚本已含）。必须在这里做——
+	// RegisterRoutes 在 web.Start 之前调用，能保证接口对外可用时列一定已存在。
+	ensureSiteColumns()
 	web.Route("GET", "/api/proxy/settings", getSettings)
 	web.Route("POST", "/api/proxy/settings", saveSettings)
 	web.Route("GET", "/api/proxy/sites", func(c *web.Ctx) error {
@@ -47,9 +51,14 @@ func RegisterRoutes() {
 	web.Route("PUT", "/api/proxy/sites/{id}", update)
 	web.Route("DELETE", "/api/proxy/sites/{id}", remove)
 	web.Route("POST", "/api/proxy/sites/toggle", toggle)
-	// 新建站点表单预填：返回后端默认高级配置（与保存时规范化一致）
+	// 静态站点发布：zip 压缩包上传（临时落 data/html/temp，保存站点时解压）
+	web.Route("POST", "/api/proxy/sites/upload", uploadZip)
+	// 新建站点表单预填：后端默认高级配置（与保存时规范化一致）+ 静态站点默认目录与上传限制
 	web.Route("GET", "/api/proxy/defaults", func(c *web.Ctx) error {
-		c.Ok(core.NewRow().Set("advanced", defaults().ToJson()))
+		c.Ok(core.NewRow().
+			Set("advanced", defaults().ToJson()).
+			Set("staticRoot", filepath.ToSlash(htmlRoot())).
+			Set("uploadMaxMB", maxUploadBytes>>20))
 		return nil
 	})
 	web.Route("GET", "/api/proxy/status", status)
@@ -65,12 +74,36 @@ func RegisterRoutes() {
 	web.Route("POST", "/api/proxy/cache/purge", purgeCache)
 }
 
+// ensureSiteColumns 旧库升级：补充代理站点缺失列（幂等）。
+func ensureSiteColumns() {
+	rows, err := core.Query("PRAGMA table_info(proxy_site)")
+	if err != nil {
+		core.LogWarn(core.LogProxy, "读取 proxy_site 表结构失败: "+err.Error())
+		return
+	}
+	for _, r := range rows {
+		if strVal(r.Get("name")) == "mode" {
+			return
+		}
+	}
+	// mode：REVERSE=反向代理后端 / STATIC=静态站点发布（默认反向，存量站点语义不变）
+	if _, err := core.Update("ALTER TABLE proxy_site ADD COLUMN mode TEXT NOT NULL DEFAULT 'REVERSE'"); err != nil {
+		core.LogError(core.LogProxy, "升级 proxy_site 失败（增加 mode 列）: "+err.Error())
+	}
+}
+
 // Init 启动接线：初始化文件缓存（重建索引 + 周期清理），并按开关拉起监听。
 // 绑定失败不抛出（不拖垮进程），写入 proxy.last_error 供前端展示。
 func Init() {
 	geoLoad() // IP 归属地离线库（ip2region xdb，外部可覆盖，均缺失时降级留空）
 	cacheInit(siteExists)
 	statsInit() // 访问记录周期落库（独立于监听开关，关停期间不丢已累积增量）
+	// 静态站点发布目录（data/html 与 data/html/temp）：启动即建好，并清理上次遗留/超时未保存的压缩包
+	if err := ensureHtmlDirs(); err != nil {
+		core.LogWarn(core.LogProxy, "初始化静态站点目录失败: "+err.Error())
+	}
+	cleanUploadTemp()
+	core.Every(600, 3600, cleanUploadTemp)
 	// 真实来源 IP 解析策略（默认 auto）：读入内存供转发热路径直接取用，避免逐请求查库
 	if v, err := core.GetConfig(keyTrustRealIp); err == nil {
 		realIPPolicy = parseRealIPPolicy(v)
@@ -253,15 +286,17 @@ func applyListener() (string, error) {
 
 // values 校验后的站点列值（advanced 为规范化后的 JSON 串）。
 type values struct {
-	name       string
-	domains    string
-	paths      string
-	target     string
-	forceHttps bool
-	certMode   string
-	certTaskId interface{} // nil → 列值 NULL
-	advanced   string
-	enabled    bool
+	name        string
+	mode        string
+	domains     string
+	paths       string
+	target      string
+	forceHttps  bool
+	certMode    string
+	certTaskId  interface{} // nil → 列值 NULL
+	advanced    string
+	enabled     bool
+	uploadToken string // 静态站点：已上传的 zip 临时凭据（可选），保存时解压到站点目录
 }
 
 func create(c *web.Ctx) error {
@@ -270,13 +305,29 @@ func create(c *web.Ctx) error {
 	if err != nil {
 		return err
 	}
-	id, err := core.Insert(`INSERT INTO proxy_site(name, domains, paths, target, force_https, cert_mode,
+	id, err := core.Insert(`INSERT INTO proxy_site(name, mode, domains, paths, target, force_https, cert_mode,
     cert_task_id, advanced, enabled)
-VALUES(?,?,?,?,?,?,?,?,?)`,
-		v.name, v.domains, v.paths, v.target, boolToInt(v.forceHttps), v.certMode,
+VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		v.name, v.mode, v.domains, v.paths, v.target, boolToInt(v.forceHttps), v.certMode,
 		v.certTaskId, v.advanced, boolToInt(v.enabled))
 	if err != nil {
 		return err
+	}
+	// 静态站点留空目录时，必须先拿到自增 id 才能算出 data/html/{id}：
+	// 先插入（target 暂为空串），目录落定/解压成功后再回填；失败则连记录与新建目录一起回滚。
+	useDefault := v.mode == ModeStatic && strings.TrimSpace(v.target) == ""
+	if err := stageStatic(id, v); err != nil {
+		_, _ = core.Update("DELETE FROM proxy_site WHERE id=?", id)
+		if useDefault {
+			removeSiteDir(id)
+		}
+		return err
+	}
+	if v.mode == ModeStatic {
+		// 目录已规范化为「绝对路径 + 正斜杠」：统一回填（留空场景即落定 data/html/{id}）
+		if _, err := core.Update("UPDATE proxy_site SET target=? WHERE id=?", v.target, id); err != nil {
+			return err
+		}
 	}
 	reloadSites()
 	core.LogInfo(core.LogProxy, "新增代理站点: "+v.name+" -> "+v.target)
@@ -298,9 +349,14 @@ func update(c *web.Ctx) error {
 	if err != nil {
 		return err
 	}
-	if _, err = core.Update(`UPDATE proxy_site SET name=?, domains=?, paths=?, target=?, force_https=?,
+	// 静态站点：先落定目录（留空→data/html/{id}）并解压上传的 zip，再写库
+	// （解压失败不改变原有站点配置，用户改完压缩包重试即可）。
+	if err := stageStatic(id, v); err != nil {
+		return err
+	}
+	if _, err = core.Update(`UPDATE proxy_site SET name=?, mode=?, domains=?, paths=?, target=?, force_https=?,
     cert_mode=?, cert_task_id=?, advanced=?, enabled=? WHERE id=?`,
-		v.name, v.domains, v.paths, v.target, boolToInt(v.forceHttps), v.certMode,
+		v.name, v.mode, v.domains, v.paths, v.target, boolToInt(v.forceHttps), v.certMode,
 		v.certTaskId, v.advanced, boolToInt(v.enabled), id); err != nil {
 		return err
 	}
@@ -323,8 +379,9 @@ func remove(c *web.Ctx) error {
 	if _, err = core.Update("DELETE FROM proxy_site WHERE id=?", id); err != nil {
 		return err
 	}
-	cachePurgeSite(id) // 站点删除即清空其磁盘缓存
-	dropSiteState(id)  // 释放限流桶与运行统计，避免长期增删站点残留
+	removeDefaultSiteDir(id, rowStr(row, "target")) // 仅清理默认目录 data/html/{id}，自填目录不动
+	cachePurgeSite(id)                              // 站点删除即清空其磁盘缓存
+	dropSiteState(id)                               // 释放限流桶与运行统计，避免长期增删站点残留
 	reloadSites()
 	core.LogInfo(core.LogProxy, "删除代理站点 #"+strconv.FormatInt(id, 10)+": "+rowStr(row, "name"))
 	c.Ok("已删除")
@@ -402,6 +459,8 @@ func validate(b map[string]interface{}) (*values, error) {
 	if name == "" {
 		return nil, core.NewBadRequest("站点名称不能为空")
 	}
+	// 站点类型：REVERSE（默认，反向代理后端）/ STATIC（静态站点发布）
+	mode := parseMode(core.BodyStr(b, "mode"))
 	domains := strings.TrimSpace(core.BodyStr(b, "domains"))
 	if err := validateDomains(domains); err != nil {
 		return nil, err
@@ -411,7 +470,15 @@ func validate(b map[string]interface{}) (*values, error) {
 		return nil, err
 	}
 	target := strings.TrimSpace(core.BodyStr(b, "target"))
-	if err := validateTarget(target); err != nil {
+	if mode == ModeStatic {
+		// 静态站点：target 为站点目录，留空则用默认目录 data/html/{id}（保存时自动创建）；
+		// 手填目录仍要求确实存在（目录打错/未挂载当场暴露）。
+		if target != "" {
+			if _, err := staticRootDir(target, true); err != nil {
+				return nil, core.NewBadRequest("%s", err.Error())
+			}
+		}
+	} else if err := validateTarget(target); err != nil {
 		return nil, err
 	}
 
@@ -456,8 +523,40 @@ func validate(b map[string]interface{}) (*values, error) {
 		return nil, core.NewBadRequest("强制 HTTPS 需要可用证书，证书模式不能为 NONE")
 	}
 	enabled := core.BodyBool(b, "enabled", true)
-	return &values{name, domains, paths, target, forceHttps, certMode, certTaskId,
-		string(advBytes), enabled}, nil
+	// 静态站点：可携一次 zip 上传凭据（先上传到 data/html/temp，保存时解压进站点目录）
+	uploadToken := strings.TrimSpace(core.BodyStr(b, "uploadToken"))
+	if uploadToken != "" {
+		if mode != ModeStatic {
+			return nil, core.NewBadRequest("只有静态站点可以上传压缩包")
+		}
+		if !uploadTokenRe.MatchString(uploadToken) {
+			return nil, core.NewBadRequest("上传凭据无效，请重新上传压缩包")
+		}
+	}
+	return &values{name: name, mode: mode, domains: domains, paths: paths, target: target,
+		forceHttps: forceHttps, certMode: certMode, certTaskId: certTaskId,
+		advanced: string(advBytes), enabled: enabled, uploadToken: uploadToken}, nil
+}
+
+// stageStatic 静态站点保存前的存储动作：目录落定（留空→data/html/{id}，自动创建）
+// 与 zip 解压（临时包解压进站点目录后立即删除）。非静态站点直接返回。
+func stageStatic(id int64, v *values) error {
+	if v.mode != ModeStatic {
+		return nil
+	}
+	dir, err := resolveStaticSiteDir(id, v.target)
+	if err != nil {
+		return core.NewBadRequest("%s", err.Error())
+	}
+	v.target = dir
+	if v.uploadToken == "" {
+		return nil
+	}
+	if err := applyUpload(v.uploadToken, dir, v.name); err != nil {
+		return err
+	}
+	v.uploadToken = ""
+	return nil
 }
 
 // ---------- 字段读取：兼容前端把列表行（DB 列名 snake_case）直接回写的编辑往返 ----------
@@ -553,7 +652,7 @@ func OnCertRenewed() {
 
 // AllSites 站点列表（前端下拉等），仅暴露必要字段。
 func AllSites() (core.Rows, error) {
-	return core.Query("SELECT id, name, domains, paths, target, enabled FROM proxy_site ORDER BY id")
+	return core.Query("SELECT id, name, mode, domains, paths, target, enabled FROM proxy_site ORDER BY id")
 }
 
 // ListeningStatus 供 Dashboard 注入：代理监听端口是否已绑定（>0）。
