@@ -95,7 +95,7 @@ func ensureSiteColumns() {
 // Init 启动接线：初始化文件缓存（重建索引 + 周期清理），并按开关拉起监听。
 // 绑定失败不抛出（不拖垮进程），写入 proxy.last_error 供前端展示。
 func Init() {
-	geoLoad() // IP 归属地离线库（ip2region xdb，外部可覆盖，均缺失时降级留空）
+	geoLoad() // IP 归属地离线库（内置 ip2region xdb：索引常驻 + 正文按需读文件，不可用时降级留空）
 	cacheInit(siteExists)
 	statsInit() // 访问记录周期落库（独立于监听开关，关停期间不丢已累积增量）
 	// 静态站点发布目录（data/html 与 data/html/temp）：启动即建好，并清理上次遗留/超时未保存的压缩包
