@@ -398,7 +398,7 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, prefix+"/", http.StatusFound)
 			return
 		case path == prefix+"/":
-			serveIndex(w)
+			serveIndex(w, r)
 			return
 		case strings.HasPrefix(path, prefix+"/"):
 			innerPath = path[len(prefix):]
@@ -453,10 +453,10 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 根路径 / 静态回退（仅非入口模式；入口模式下前缀内的静态已用 innerPath 分发）。
 	if !entryOn && path == "/" {
-		serveIndex(w)
+		serveIndex(w, r)
 		return
 	}
-	serveStatic(w, innerPath)
+	serveStatic(w, r, innerPath)
 }
 
 func runHandler(w http.ResponseWriter, r *http.Request, h Handler, params map[string]string) {
@@ -537,28 +537,6 @@ func matchSegs(pat []segment, got []string) (map[string]string, bool) {
 		return nil, false
 	}
 	return params, true
-}
-
-func serveIndex(w http.ResponseWriter) {
-	data, ok := staticRead("index.html")
-	if !ok {
-		notFoundPlain(w)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = w.Write(data)
-}
-
-func serveStatic(w http.ResponseWriter, rel string) {
-	data, ok := staticRead(strings.TrimPrefix(rel, "/"))
-	if !ok {
-		notFoundPlain(w)
-		return
-	}
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Content-Type", contentType(rel))
-	_, _ = w.Write(data)
 }
 
 func notFoundPlain(w http.ResponseWriter) {

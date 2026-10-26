@@ -84,20 +84,20 @@
 <!-- 轻提示 -->
 <div id="toast" class="toast hidden"></div>
 
-<!-- 各菜单模块脚本，须先于 app.js 加载 -->
-<script src="js/dashboard.js"></script>
-<script src="js/home.js"></script>
-<script src="js/ddns.js"></script>
-<script src="js/stun.js"></script>
-<script src="js/monitor.js"></script>
-<script src="js/notify.js"></script>
-<script src="js/wol.js"></script>
-<script src="js/cert.js"></script>
-<script src="js/proxy.js"></script>
-<script src="js/docker.js"></script>
-<script src="js/logs.js"></script>
-<script src="js/diag.js"></script>
-<script src="js/settings.js"></script>
-<script src="app.js"></script>
+<!-- 各菜单模块脚本，须先于 app.js 加载；defer 保证按文档顺序执行且不阻塞 HTML 解析 -->
+<script defer src="js/dashboard.js"></script>
+<script defer src="js/home.js"></script>
+<script defer src="js/ddns.js"></script>
+<script defer src="js/stun.js"></script>
+<script defer src="js/monitor.js"></script>
+<script defer src="js/notify.js"></script>
+<script defer src="js/wol.js"></script>
+<script defer src="js/cert.js"></script>
+<script defer src="js/proxy.js"></script>
+<script defer src="js/docker.js"></script>
+<script defer src="js/logs.js"></script>
+<script defer src="js/diag.js"></script>
+<script defer src="js/settings.js"></script>
+<script defer src="app.js"></script>
 </body>
 </html>
