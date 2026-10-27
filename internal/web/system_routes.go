@@ -83,7 +83,8 @@ func registerAuthRoutes() {
 		if token == "" {
 			token = c.Query("token")
 		}
-		c.Ok(core.NewRow().Set("loggedIn", auth.Check(token)))
+		loggedIn := auth.Check(token) || auth.CheckAccessToken(c.Header("Access-Token"))
+		c.Ok(core.NewRow().Set("loggedIn", loggedIn))
 		return nil
 	})
 
@@ -197,6 +198,32 @@ func registerSystemRoutes() {
 		core.LogInfo(core.LogSys, "访问配置已更新，服务即将重启应用新配置")
 		ScheduleRestart(1)
 		c.Ok("已保存，服务正在以新配置重启")
+		return nil
+	})
+
+	// 接口访问令牌：Header 中携带 Access-Token 即可调用全部接口（权限等同已登录用户）。
+	// 保存后立即生效，不需要重启 Web 服务；留空表示停用。
+	Route("GET", "/api/system/access-token", func(c *Ctx) error {
+		token, err := auth.GetAccessToken()
+		if err != nil {
+			return err
+		}
+		c.Ok(core.NewRow().Set("token", token).Set("maxLength", auth.MaxAccessTokenLen))
+		return nil
+	})
+	Route("PUT", "/api/system/access-token", func(c *Ctx) error {
+		token := strings.TrimSpace(core.BodyStr(c.Body(), "token"))
+		if err := auth.SetAccessToken(token); err != nil {
+			return err
+		}
+		if token == "" {
+			core.LogInfo(core.LogAuth, "接口访问令牌已停用")
+			c.Ok("接口访问令牌已停用")
+			return nil
+		}
+		// 日志只记录长度，不落令牌明文
+		core.LogInfo(core.LogAuth, fmt.Sprintf("接口访问令牌已更新（%d 位）", len(token)))
+		c.Ok("接口访问令牌已保存，立即生效")
 		return nil
 	})
 

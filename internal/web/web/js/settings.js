@@ -21,6 +21,9 @@ async function renderSettings() {
     // 登录安全配置（失败锁定阈值 / 锁定时长）
     let sec = { maxFails: 3, lockMinutes: 30 };
     try { sec = await api('GET', '/api/auth/security'); } catch (e) { /* ignore */ }
+    // 接口访问令牌（请求头 Access-Token，权限等同已登录用户）
+    let at = { token: '', maxLength: 64 };
+    try { at = await api('GET', '/api/system/access-token'); } catch (e) { /* ignore */ }
     const memPct = metrics.memTotalMB > 0 ? Math.round(metrics.memUsedMB * 100 / metrics.memTotalMB) : 0;
     // 进程内存（RSS/上限）：来自 /api/system/info，与系统物理内存区分，便于定位进程增长
     const heapPct = info.maxMemoryMB > 0 ? Math.round(info.usedMemoryMB * 100 / info.maxMemoryMB) : 0;
@@ -91,6 +94,24 @@ async function renderSettings() {
         </form>
       </div>
       <div class="panel">
+        <h3 style="font-size:14px;margin-bottom:12px">接口访问令牌</h3>
+        <div class="tip" style="margin-bottom:12px">在请求头中携带 <b>Access-Token: &lt;令牌&gt;</b> 即可调用全部接口，
+          权限等同于<b>已登录用户</b>（不参与单点登录与 24 小时会话过期），适合其他系统/脚本（如邮件服务器定时拉取证书）长期调用。
+          令牌为明文保存，请仅在可信网络或 HTTPS 下使用；启用安全入口时接口路径同样需带入口前缀。</div>
+        <form id="atForm" class="form-grid">
+          <div class="field full"><label>Access-Token（8~64 位字母/数字/-/_，留空停用）</label>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+              <input name="token" maxlength="${at.maxLength || 64}" style="flex:1;min-width:240px"
+                     placeholder="留空表示停用，可点右侧按钮随机生成" value="${esc(at.token || '')}">
+              <button type="button" class="btn" onclick="atGenerate()">随机生成</button>
+              <button type="button" class="btn" onclick="atCopy()">复制</button>
+            </div>
+            <div class="small muted" style="margin-top:6px">调用示例：
+              <code>curl -H "Access-Token: &lt;令牌&gt;" http://地址:端口/api/cert/tasks</code>；保存后立即生效，无需重启。</div></div>
+          <div class="form-foot full"><button class="btn primary">保存令牌</button></div>
+        </form>
+      </div>
+      <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">服务商凭证配置</h3>
         <div class="tip" style="margin-bottom:12px">集中维护云服务商 AccessKey：<b>DDNS 同步</b>与
           <b>SSL 证书 DNS01 自动验证</b>在表单中直接下拉选择引用，无需每次重复输入；
@@ -150,6 +171,44 @@ async function renderSettings() {
                 maxFails: Number(f.get('maxFails')), lockMinutes: Number(f.get('lockMinutes'))
             });
             toast(msg);
+        } catch (err) { toast(err.message, 'err'); }
+    });
+
+    // 接口访问令牌：随机生成（拒绝采样避免取模偏差）/ 复制 / 保存
+    window.atGenerate = () => {
+        const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        const limit = 256 - (256 % chars.length);
+        let out = '';
+        while (out.length < 32) {
+            const buf = new Uint8Array(32);
+            crypto.getRandomValues(buf);
+            for (const b of buf) {
+                if (b < limit && out.length < 32) out += chars[b % chars.length];
+            }
+        }
+        $('#atForm').querySelector('[name="token"]').value = out;
+        toast('已生成新令牌，记得点击保存');
+    };
+    window.atCopy = () => {
+        const el = $('#atForm').querySelector('[name="token"]');
+        const text = String(el.value || '').trim();
+        if (!text) { toast('令牌为空，请先生成', 'err'); return; }
+        const done = () => toast('已复制到剪贴板');
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(done).catch(() => {
+                el.select(); document.execCommand('copy'); done();
+            });
+            return;
+        }
+        el.select(); document.execCommand('copy'); done();
+    };
+    $('#atForm').addEventListener('submit', async e => {
+        e.preventDefault();
+        const token = String(new FormData(e.target).get('token') || '').trim();
+        try {
+            const msg = await api('PUT', '/api/system/access-token', { token });
+            toast(msg);
+            renderSettings();
         } catch (err) { toast(err.message, 'err'); }
     });
 

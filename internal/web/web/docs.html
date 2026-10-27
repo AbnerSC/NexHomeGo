@@ -89,7 +89,7 @@
                         <tr><td>🐳 Docker 容器</td><td>容器观测与起停运维</td><td><a href="#sec-docker">第 11 章</a></td></tr>
                         <tr><td>📋 操作日志</td><td>全模块运行日志检索</td><td><a href="#sec-logs">第 12 章</a></td></tr>
                         <tr><td>🩺 内存诊断</td><td>内存分解、跳变点与日志关联分析</td><td><a href="#sec-diag">第 13 章</a></td></tr>
-                        <tr><td>⚙️ 系统设置</td><td>访问配置、HTTPS、安全入口、凭证、密码、备份</td><td><a href="#sec-settings">第 14 章</a></td></tr>
+                        <tr><td>⚙️ 系统设置</td><td>访问配置、HTTPS、安全入口、接口令牌、凭证、密码、备份</td><td><a href="#sec-settings">第 14 章</a></td></tr>
                         </tbody>
                     </table>
                     <p>顶栏右侧常驻 <b>CPU / 内存 / 虚拟内存</b> 三项实时负载（每 5 秒刷新，≥60% 变橙、≥85% 变红），以及 <b>📖 使用文档</b>（打开本页）与 <b>退出登录</b> 按钮。左下角显示当前版本号与 Go 运行时版本。</p>
@@ -1023,17 +1023,34 @@
                     <div class="doc-note warn"><b>开启安全入口前必读</b>保存即重启且地址变更，旧地址立即不再生效。若忘记入口路径，需按 <a href="#sec-faq">第 16 章</a> 的方式直接修改数据库恢复。</div>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>14.3 服务商凭证配置</h3></summary>
+                    <summary><h3>14.3 接口访问令牌（Access-Token）</h3></summary>
+                    <p>配置一个<b>接口访问令牌</b>后，在请求头中携带 <code>Access-Token: &lt;令牌&gt;</code> 即可调用全部 <code>/api/**</code> 接口，权限<b>等同于已登录用户</b>。适用于其他系统或脚本长期调用（例如邮件服务器定时拉取证书、批量查询任务状态）。</p>
+                    <table>
+                        <thead><tr><th style="width:190px">字段</th><th>说明</th></tr></thead>
+                        <tbody>
+                        <tr><td>Access-Token</td><td>长度 <b>8~64 位</b>，仅支持<b>字母、数字、中划线、下划线</b>；<b>留空保存即停用</b>。点「随机生成」自动填入 32 位高强度随机串，也可手动输入；「复制」按钮可一键复制。</td></tr>
+                        </tbody>
+                    </table>
+                    <pre>curl -H "Access-Token: &lt;令牌&gt;" http://地址:端口/api/cert/tasks</pre>
+                    <ul>
+                        <li>保存后<b>立即生效</b>，无需重启 Web 服务；修改后旧令牌立即失效。</li>
+                        <li>令牌不参与<b>单点登录</b>与 24 小时会话过期，不会把浏览器会话踢下线。</li>
+                        <li>启用<b>安全入口</b>时，接口路径同样需要带入口前缀（如 <code>/入口/api/cert/tasks</code>）。</li>
+                    </ul>
+                    <div class="doc-note warn"><b>安全提醒</b>令牌为明文保存，且能力<b>等同于登录密码</b>（可下载证书私钥、导出数据库、修改全部配置）。请仅在可信网络或 HTTPS 下使用，一旦泄露应立即重新生成；不需要时留空停用。</div>
+                </details>
+                <details class="doc-sub-sec">
+                    <summary><h3>14.4 服务商凭证配置</h3></summary>
                     <p>集中维护云服务商 AccessKey，<b>DDNS 同步</b>与 <b>SSL 证书 DNS01 自动验证</b>在表单中直接下拉引用，<b>修改后所有引用它的任务自动生效</b>。目前服务商仅支持<b>阿里云（云解析 / ESA）</b>。</p>
                     <p>字段：<b>配置名称 *</b>（如“阿里云主账号”）、<b>服务商 *</b>、<b>ESA 站点 SiteId</b>（仅阿里云显示且可选，<b>域名托管在 ESA 做 DNS01 自动验证时必填</b>）、<b>AccessKey ID *</b>、<b>AccessKey Secret *</b>（密码型输入）。列表中 AccessKey ID <b>脱敏展示</b>（前 4 后 4，中间以 ****）。</p>
                     <p><b>删除凭证时的联动处理</b>（确认弹窗会明说）：引用它的 <b>DDNS 任务回填当前凭证</b>继续可用；<b>证书任务回到手动添加 TXT 模式</b>；<b>STUN 任务的 ESA 同步失效</b>。建议删除前先检查引用。</p>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>14.4 修改登录密码</h3></summary>
+                    <summary><h3>14.5 修改登录密码</h3></summary>
                     <p>原密码 * + 新密码 *（<b>至少 12 位</b>，表单已做 minlength 校验）+ 确认新密码 *，两次不一致会直接提示。修改成功后<b>清空本地会话并回到登录页</b>（所有已登录设备都需重新登录）。密码以 <b>SHA-256</b> 摘要存储，系统不可反向查看。</p>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>14.5 登录安全设置</h3></summary>
+                    <summary><h3>14.6 登录安全设置</h3></summary>
                     <table>
                         <thead><tr><th style="width:250px">字段</th><th>说明</th></tr></thead>
                         <tbody>
@@ -1044,7 +1061,7 @@
                     <p>达上限后该<b>来源 IP</b> 被临时锁定指定时长，成功登录后计数清零；失败计数为<b>进程内存态，重启后归零</b>。锁定触发时推送 <code>auth.lockout</code> 告警。系统强制<b>单点登录</b>。</p>
                 </details>
                 <details class="doc-sub-sec">
-                    <summary><h3>14.6 配置备份</h3></summary>
+                    <summary><h3>14.7 配置备份</h3></summary>
                     <p>「⬇ 下载配置备份」导出当前数据库（所有任务与配置）的<b>一致性快照文件</b>（基于 <code>VACUUM INTO</code>，不会读到中途写入的半成品数据），用于离线备份与迁移。<b>本期仅提供下载导出，不提供导入恢复</b>；恢复需手工替换 <code>data/nexhome.db</code>。</p>
                     <div class="doc-note tip"><b>建议</b>改密码、改端口、改安全入口前先备份一次；忘记密码时也可凭备份避免丢失全部配置。</div>
                 </details>

@@ -411,7 +411,9 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 		innerPath = path
 	}
 
-	// 鉴权前置：/api/** 除登录与登录状态检查外均需有效 token。
+	// 鉴权前置：/api/** 除登录与登录状态检查外均需有效凭证。
+	// 两种方式等价：会话令牌（X-Token，或只读方法的 ?token=）或接口访问令牌（Access-Token 请求头，
+	// 由系统设置页配置，供其他系统/脚本长期调用，不参与单点登录）。
 	if strings.HasPrefix(innerPath, "/api/") &&
 		innerPath != "/api/auth/login" && innerPath != "/api/auth/check" {
 		token := r.Header.Get("X-Token")
@@ -424,8 +426,12 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !auth.Check(token) {
-			writeFail(w, http.StatusUnauthorized, "未登录或登录已过期")
-			return
+			if !auth.CheckAccessToken(r.Header.Get("Access-Token")) {
+				writeFail(w, http.StatusUnauthorized, "未登录或登录已过期")
+				return
+			}
+			// 令牌走请求头，响应不得被中间层缓存。
+			w.Header().Set("Cache-Control", "no-store")
 		}
 	}
 

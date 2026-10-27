@@ -23,11 +23,17 @@ const (
 	KeyPassword    = "auth.password"
 	KeyMaxFails    = "security.login.maxFails"
 	KeyLockMinutes = "security.login.lockMinutes"
+	// KeyAccessToken 接口访问令牌（app_config）：非空时通过请求头 Access-Token 携带可访问全部接口。
+	KeyAccessToken = "auth.access_token"
 
 	initPasswordLength = 16
 	tokenTTLms         = int64(24 * 3600 * 1000)
 	defaultMaxFails    = 3
 	defaultLockMinutes = 30
+
+	// MinAccessTokenLen / MaxAccessTokenLen 接口访问令牌长度区间（上限与设置页输入框一致）。
+	MinAccessTokenLen = 8
+	MaxAccessTokenLen = 64
 )
 
 // NotifyBroadcast 由通知中心在启动时注入：锁定事件扇出（解耦，auth 不直接依赖 notify 包）。
@@ -194,6 +200,44 @@ func GetMaxFails() (int, error) {
 
 func GetLockMinutes() (int, error) {
 	return readIntConfig(KeyLockMinutes, defaultLockMinutes, 1, 1440)
+}
+
+// GetAccessToken 读取接口访问令牌（空串表示未启用）。
+func GetAccessToken() (string, error) {
+	return core.GetConfig(KeyAccessToken)
+}
+
+// SetAccessToken 保存接口访问令牌：留空表示停用，非空需 8~64 位字母/数字/中划线/下划线。
+// 令牌以明文保存（调用方需复制使用），不参与会话单点登录。
+func SetAccessToken(token string) error {
+	token = strings.TrimSpace(token)
+	if token != "" {
+		if len(token) < MinAccessTokenLen || len(token) > MaxAccessTokenLen {
+			return core.NewBadRequest("Access-Token 长度需在 %d~%d 位之间", MinAccessTokenLen, MaxAccessTokenLen)
+		}
+		for _, c := range token {
+			ok := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'
+			if !ok {
+				return core.NewBadRequest("Access-Token 仅支持字母、数字、中划线与下划线")
+			}
+		}
+	}
+	return core.SetConfig(KeyAccessToken, token)
+}
+
+// CheckAccessToken 校验请求头携带的接口访问令牌：未配置时一律拒绝；
+// 比对使用恒定时间算法，避免按字节短路比较泄露前缀。
+func CheckAccessToken(token string) bool {
+	token = strings.TrimSpace(token)
+	// 长度越界直接拒绝：既省一次查库，也避免对超长输入做比较
+	if len(token) < MinAccessTokenLen || len(token) > MaxAccessTokenLen {
+		return false
+	}
+	want, err := core.GetConfig(KeyAccessToken)
+	if err != nil || want == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(token), []byte(want)) == 1
 }
 
 // SetSecurity 设置登录安全参数。
