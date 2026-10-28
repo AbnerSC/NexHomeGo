@@ -68,6 +68,11 @@ const tcpSpares = 60
 // 网络侧阻断，每保活周期（10s）反复探测与弹跳（关闭监听重组）只会无谓打断入站
 const rebuildBackoffSec = 60
 
+// outboundOutageRepunchMS 出站链路持续无法自愈达到该时长即主动整体重穿（毫秒）：
+// 退避重连与弹跳重建长期失败（典型为 WAN IP 漂移致旧映射失效、出站候选整体被网络策略阻断）时，
+// 保活周期内的备用配额重连已无力回天，唯有等价「重启任务」的干净整体重穿才能重新出站探测拿到精确映射
+const outboundOutageRepunchMS = 10 * 60 * 1000
+
 // WAN 腿 socket 显式发送/接收缓冲（字节）：CGNAT/移动宽带链路 RTT 高（实测可达 200ms），
 // 内核自动扩窗在短连接上来不及涨到线速所需的带宽时延积（BDP=带宽×RTT，50Mbps×200ms≈1.25MB）。
 // 显式给足 4MB 让单流一次爬坡即可填满 BDP。注意：显式设置会关闭该 socket 的内核自动调优，
@@ -181,7 +186,11 @@ type runner struct {
 	warnedKeepalive    map[string]bool
 	lastExtCheckAt     atomic.Int64
 	lastExtReachable   atomic.Int64 // -1=未判定 0=不可达 1=可达
-	extCheckRunning    atomic.Bool
+	// lastExtViaHairpin 当前 lastExtReachable==1 的「可达」结论是否由本机回流(hairpin)直连成功建立：
+	// 为真说明本网络支持回流，此后实时 hairpin 探测失败即映射已失效的有效证据（供作废过期缓存）；
+	// 为假说明可达结论来自第三方验证（无回流网络），hairpin 失败属常态，不得据此作废缓存
+	lastExtViaHairpin atomic.Bool
+	extCheckRunning   atomic.Bool
 	// verifyMu 自测串行锁：手动自测、周期巡检与重建后复验共用同一把锁，
 	// 避免并发自测互相覆盖结论（后写覆盖先写会让前端结论随机跳变）
 	verifyMu sync.Mutex
@@ -190,6 +199,13 @@ type runner struct {
 	tcpRetryAt atomic.Int64
 	// rebuildWarned 出站链路重建失败已告警：同一故障只告警一次，重建成功后复位
 	rebuildWarned atomic.Bool
+	// outageSince 出站链路持续不可用（首次进入退避重试且尚未恢复）的起始时刻（ms），0=健康。
+	// 由 deferRebuild 首次进入退避时置位、cleanRebuildBackoff 恢复时清零；连续超过
+	// outboundOutageRepunchMS 仍未自愈即由巡检触发一次整体重穿（见 checkOutboundOutage）。
+	// 不用 wanTcpReady 计时：自测 FAIL→OK 仲裁每周期都会把 wanTcpReady 翻回 true，会不断清零计时
+	outageSince atomic.Int64
+	// repunching 整体重穿已派发：重穿异步窗口内避免重复派发（新实例接管后本实例随即被 stop）
+	repunching atomic.Bool
 	// lastPeerVerifiedAt 最近一次因真实外网访问而刷新自测的时间（ms）：按自测周期节流，
 	// 避免高频访问持续写库
 	lastPeerVerifiedAt atomic.Int64
@@ -792,10 +808,11 @@ func (r *runner) refreshTcpLink() {
 	r.bounceRebuild(port)
 }
 
-// cleanRebuildBackoff 出站链路恢复正常：复位失败告警与重试退避
+// cleanRebuildBackoff 出站链路恢复正常：复位失败告警、重试退避与持续不可用计时
 func (r *runner) cleanRebuildBackoff() {
 	r.rebuildWarned.Store(false)
 	r.tcpRetryAt.Store(0)
+	r.outageSince.Store(0) // 出站链路已恢复：清零持续不可用计时，整体重穿兜底重新计时
 }
 
 // deferRebuild 出站链路整体不可达：进入退避重试窗口（≈60s），同一故障只告警一次。
@@ -805,7 +822,50 @@ func (r *runner) deferRebuild(msg string) {
 		core.LogWarn(core.LogStun, "任务["+r.name+"] "+msg+"，"+
 			strconv.Itoa(rebuildBackoffSec)+"s 后重试出站探测")
 	}
-	r.tcpRetryAt.Store(time.Now().UnixMilli() + rebuildBackoffSec*1000)
+	now := time.Now().UnixMilli()
+	// 首次进入退避记为「持续不可用」起点；已置位则保留，令计时跨多个退避周期累计，
+	// 供 checkOutboundOutage 判定是否达到整体重穿阈值（恢复由 cleanRebuildBackoff 清零）
+	r.outageSince.CompareAndSwap(0, now)
+	r.tcpRetryAt.Store(now + rebuildBackoffSec*1000)
+}
+
+// checkOutboundOutage 出站链路长期无法自愈的整体重穿兜底（巡检周期调用）：
+// 以 deferRebuild/cleanRebuildBackoff 维护的持续不可用计时为准（与自测仲裁是否翻正
+// wanTcpReady 无关）。连续不可用超过 outboundOutageRepunchMS（默认 10 分钟）仍未恢复，
+// 说明保活周期内的退避重连与弹跳重建都已无力回天（典型为 WAN IP 漂移致旧映射失效、
+// 出站候选整体被阻断），此时等价「重启任务」的整体重穿才能从干净状态重新出站探测、拿到精确映射。
+// 重穿在独立 goroutine 内异步执行：watchChannel 自身是被 taskWg 记账的巡检协程，
+// 同步调用 startTask（含 stop 旧实例）会与自身争用启停锁与端口，异步派发则与新实例自然交接。
+func (r *runner) checkOutboundOutage() {
+	since := r.outageSince.Load()
+	if since == 0 {
+		return // 出站链路健康（或尚未进入退避）
+	}
+	now := time.Now().UnixMilli()
+	if now-since < outboundOutageRepunchMS {
+		return
+	}
+	// 近期仍有真实外网访问（非自测回环）：通道确凿可用，只是出站探测被阻，
+	// 整体重穿会白白打断正在承载的入站流量——与巡检豁免一致，不重穿
+	if evidence := r.recentPeerInboundDesc(); evidence != "" {
+		return
+	}
+	if !r.repunching.CompareAndSwap(false, true) {
+		return // 已派发重穿，等待新实例接管（本实例随后被 stop）
+	}
+	core.LogWarn(core.LogStun, "任务["+r.name+"] TCP出站链路持续不可用 "+
+		strconv.FormatInt((now-since)/1000, 10)+"s（退避重连与弹跳重建均未能自愈），主动整体重穿一次")
+	id := r.id
+	go func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				core.LogWarn(core.LogStun, "任务整体重穿异常: "+fmt.Sprint(rec))
+			}
+		}()
+		if err := startTask(id); err != nil {
+			core.LogError(core.LogStun, "任务整体重穿失败: "+err.Error())
+		}
+	}()
 }
 
 // bounceRebuild 弹跳重建（异步串行队列执行）：关闭监听释放本地端口后，在端口空闲的窗口内
@@ -1409,6 +1469,11 @@ func (r *runner) verifyChannel(manual bool) (*core.Row, error) {
 			// 尚未被上游回收。先看「真实外网访问」证据（最权威，不依赖本机回流），再看公网入站验证。
 			// 典型场景：STUN 与公共出站端点整体被阻断（出站探测全失败）但入站监听仍正常承载流量
 			reason := strings.TrimSuffix(strings.TrimPrefix(result, "FAIL("), ")")
+			// 本轮实时 hairpin 已失败(localInbound==0)且链路自检也 FAIL：若缓存的「可达」结论
+			// 当初正是由 hairpin 成功建立（本网络支持回流），则此刻回流失败即映射已随 WAN IP 漂移/
+			// 超时失效——旧缓存不可信，作废它，避免用过期的「可达」把真实 FAIL 翻成 OK 而漏报告警。
+			// 无回流网络的可达缓存来自第三方验证，不受影响（见 invalidateStaleHairpinVerdict）
+			r.invalidateStaleHairpinVerdict(localInbound)
 			if evidence := r.recentPeerInboundDesc(); evidence != "" {
 				r.wanTcpReady.Store(true) // 外网能连入即映射有效：同步纠正就绪状态
 				core.LogWarn(core.LogStun, "任务["+r.name+"] 保活链路自检异常("+reason+")但"+evidence+
@@ -1629,6 +1694,10 @@ func (r *runner) noteExtVerdict(ext string, local bool) {
 		return
 	}
 	reachable := ext == "OK"
+	if reachable && local {
+		// 本机回流直连成功：标记本网络支持 hairpin，供后续回流失败时作废过期可达缓存
+		r.lastExtViaHairpin.Store(true)
+	}
 	prev := r.lastExtReachable.Load()
 	if prev < 0 || (prev == 1) != reachable {
 		v := int64(0)
@@ -1636,6 +1705,9 @@ func (r *runner) noteExtVerdict(ext string, local bool) {
 			v = 1
 		}
 		r.lastExtReachable.Store(v)
+		if !reachable {
+			r.lastExtViaHairpin.Store(false) // 已判不可达：清除来源标记
+		}
 		if reachable {
 			src := "第三方节点真实连接 "
 			if local {
@@ -1646,6 +1718,20 @@ func (r *runner) noteExtVerdict(ext string, local bool) {
 			core.LogWarn(core.LogStun, "任务["+r.name+"] 公网入站验证失败"+ext[4:]+
 				"：保活存活但外网无法连入，请检查上层NAT/运营商策略")
 		}
+	}
+}
+
+// invalidateStaleHairpinVerdict 作废「来自 hairpin 成功」的过期可达缓存：本轮实时 hairpin 探测失败
+// (localInbound==0)、且缓存的可达结论当初正是由 hairpin 成功建立(lastExtViaHairpin)时，说明本网络
+// 支持回流——此刻回流失败即映射已失效，置回未判定(-1)让真实 FAIL 不再被过期「可达」翻成 OK；
+// 随后 inboundVerdict 会按冷却重新触发第三方验证，外网确可达时结论自动恢复。
+// 无回流网络的可达缓存来自第三方验证(lastExtViaHairpin=false)，不在此作废，避免误伤确无回流的环境。
+func (r *runner) invalidateStaleHairpinVerdict(localInbound int) {
+	if localInbound != 0 {
+		return // 未做实时探测(UDP/-1)或探测成功(1)：无「实时失败与缓存矛盾」可言
+	}
+	if r.lastExtReachable.Load() == 1 && r.lastExtViaHairpin.Load() {
+		r.lastExtReachable.Store(-1)
 	}
 }
 
@@ -1907,6 +1993,11 @@ func (r *runner) watchChannel() {
 			core.LogInfo(core.LogStun, "任务["+r.name+"] TCP映射未建立，巡检重试出站探测")
 		}
 		r.refreshTcpLink()
+	}
+	if !r.isUdp() {
+		// 出站链路长期无法自愈的整体重穿兜底：以持续不可用计时为准，不依赖 wanTcpReady
+		//（自测仲裁可能已把它翻回 true），连续 10 分钟未自愈即主动重穿一次
+		r.checkOutboundOutage()
 	}
 	// 与手动自测/重建后复验串行：已有自测在途时本轮跳过（下轮再来），避免结论互相覆盖
 	if !r.verifyMu.TryLock() {
