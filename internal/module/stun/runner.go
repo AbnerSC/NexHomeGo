@@ -671,13 +671,22 @@ func (r *runner) startTcp() error {
 	return nil
 }
 
-// openTcpListener 在指定端口开启 TCP 监听（重试以容忍刚关闭连接的端口释放延迟）
+// openTcpListener 在指定端口开启 TCP 监听（重试以容忍刚关闭连接的端口释放延迟）。
+// 经 ListenConfig.Control(listenControl) 给监听 socket 设 SO_REUSEPORT：保活链路死亡重建时，
+// 出站 dial socket 需从「已被本监听占用的同一本地端口」再次绑定，Linux 上唯有 LISTEN 与
+// connected socket 都带 SO_REUSEPORT 才能共存（见 linger_unix.go），否则出站重建全部 EADDRINUSE
+// 失败，触发无谓的 60s 退避与 10 分钟整体重穿（端口漂移）。
 func (r *runner) openTcpListener(port int) (*net.TCPListener, error) {
 	var lastErr error
+	lc := net.ListenConfig{Control: listenControl}
 	for i := 0; i < 3; i++ {
-		ln, err := net.ListenTCP("tcp4", &net.TCPAddr{Port: port})
+		ln, err := lc.Listen(context.Background(), "tcp4", ":"+strconv.Itoa(port))
 		if err == nil {
-			return ln, nil
+			if tl, ok := ln.(*net.TCPListener); ok {
+				return tl, nil
+			}
+			_ = ln.Close()
+			return nil, fmt.Errorf("监听句柄不是 TCP 类型")
 		}
 		lastErr = err
 		time.Sleep(800 * time.Millisecond)

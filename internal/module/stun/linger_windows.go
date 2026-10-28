@@ -26,3 +26,10 @@ func lingerControl(network, address string, c syscall.RawConn) error {
 	}
 	return opErr
 }
+
+// listenControl ListenConfig.Control 回调（Windows）：无 SO_REUSEPORT，Go 标准库已默认给监听 socket
+// 设 SO_REUSEADDR，此处不再重复设置，保持与改动前完全一致的监听语义。Windows 上出站与同端口
+// LISTEN 共存由 dialBoundTCP 的「绑定具体源地址 srcIp」兜底链承担（见 client.go）。
+func listenControl(network, address string, c syscall.RawConn) error {
+	return nil
+}
