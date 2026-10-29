@@ -1275,14 +1275,17 @@ th.docker-sort:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
 .modal td .btn { white-space: nowrap; }
 
 /* ---------- 统一状态仪表盘（总览） ---------- */
+/* 用 flex 而非等宽 grid：运行时长这类内容较长的卡片可按内容撑宽，
+   不必把数值折成两行（同排卡片宽度相近，视觉上仍是一行排列） */
 .dash-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    display: flex;
+    flex-wrap: wrap;
     gap: 12px;
     margin-bottom: 14px;
 }
 .dash-stat {
     position: relative;
+    flex: 1 1 180px;
     display: flex;
     align-items: center;
     gap: 12px;
@@ -1306,7 +1309,7 @@ th.docker-sort:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
 }
 .dash-stat:hover { border-color: var(--border-strong); transform: translateY(-2px); box-shadow: 0 12px 30px rgba(0, 0, 0, .4), var(--glow-soft); }
 .dash-stat-icon { font-size: 26px; line-height: 1; filter: drop-shadow(0 0 8px rgba(109, 139, 255, .5)); }
-.dash-stat .v { font-size: 20px; font-weight: 700; color: #eef2ff; font-variant-numeric: tabular-nums; }
+.dash-stat .v { font-size: 20px; font-weight: 700; color: #eef2ff; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .dash-stat .l { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .dash-stat.ok::before { background: var(--grad-primary); box-shadow: 0 0 12px rgba(52, 211, 153, .6); }
 .dash-stat.warn::before { background: linear-gradient(180deg, #fbbf24, #f97316); box-shadow: 0 0 12px rgba(251, 191, 36, .6); }

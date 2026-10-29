@@ -1,11 +1,14 @@
 /* ============ 统一状态仪表盘（总览） ============ */
 'use strict';
 
-/** 秒数转可读运行时长 */
+/**
+ * 秒数转可读运行时长。紧凑写法不带空格（如 1天3小时26分钟）：
+ * 总览指标卡宽度有限，带空格的版本在窄卡片里会被折成两行。
+ */
 function fmtUptime(sec) {
     sec = sec || 0;
     const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600), m = Math.floor(sec % 3600 / 60);
-    return (d > 0 ? d + ' 天 ' : '') + h + ' 小时 ' + m + ' 分钟';
+    return (d > 0 ? d + '天' : '') + h + '小时' + m + '分钟';
 }
 
 /** 数字千分位 */
@@ -249,7 +252,7 @@ async function renderDashboard() {
         ? `${docker.running ?? 0}<span class="muted" style="font-size:13px"> / ${docker.containers ?? 0}</span>`
         : '<span class="muted" style="font-size:15px">未连接</span>',
         'Docker 运行/总容器', docker.connected ? ((docker.stopped ?? 0) > 0 ? 'warn' : 'ok') : '', 'docker');
-    stats += card('⏱️', fmtUptime(sys.uptimeSec), `端口 ${sys.port || '-'}${sys.httpsActive ? ' · HTTPS' : ''}`, '', '');
+    stats += card('⏱️', fmtUptime(sys.uptimeSec), '运行时长', '', '');
     stats += '</div>';
 
     // 证书临期明细
