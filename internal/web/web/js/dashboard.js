@@ -25,12 +25,47 @@ function fmtMbps(bytesPerSec) { return (bytesPerSec * 8 / 1e6).toFixed(1) + ' Mb
  */
 const speedState = {
     running: false, ping: '', loss: '', down: '', up: '',
-    jitter: '', pingSub: '', jitterSub: '', downSub: '',
+    jitter: '', pingSub: '', jitterSub: '', downSub: '', upSub: '',
     progIdx: -1, progPct: 0, progText: ''
 };
 
 /** 测速时长：延迟/下载/上传三个阶段统一各测 10 秒 */
 const SPEED_TEST_MS = 10000;
+
+/**
+ * 稳态丢弃窗口：测量开始后的头一段只跑不计。参考 LibreSpeed 的 time_dlGraceTime(1.5s)
+ * 与 time_ulGraceTime(3s)——它到点把累计字节与起始时间一起重置，等价于「只统计链路
+ * 灌满之后的部分」。丢包退避、深缓冲排空、TCP 慢启动都发生在这段里，若照常计入，
+ * 10 秒均值会被开头几秒的爬坡拉低一大截（实测同一链路两种口径能差一个量级）。
+ * 上行更慢才灌满（服务端 ACK、网卡队列、运营商上行整形都在这一侧），故窗口更长。
+ */
+const SPEED_DL_GRACE_MS = 1500, SPEED_UP_GRACE_MS = 3000;
+
+/**
+ * 传输开销补偿：LibreSpeed 的 overheadCompensationFactor 默认 1.06。
+ * 我们按应用层收到的字节算速率，而链路上还跑着 TCP/IP 头与 TLS 记录开销，
+ * 1.06 是把「载荷速率」折算到「线速」的经验系数；与 LibreSpeed 对齐后两边的数
+ * 才能直接比较（否则同一条链路我们的读数会系统性低 6%）。
+ */
+const SPEED_OVERHEAD = 1.06;
+
+/**
+ * 下载定长分段：每片 32MB（服务端 speedDownMaxFixed 的上限），收完立刻发下一片。
+ * 这是与 LibreSpeed 对齐的关键：garbage.php 每次也只吐固定 ckSize，收完由客户端
+ * 重新发起。若改用无界 chunked（旧的 ?ms= 长连接），服务端往内核缓冲里灌多少字节
+ * 与浏览器真正收到多少完全脱钩——缓冲厚的链路上服务端几秒就写完几百 MB，浏览器
+ * 还在按链路速率慢慢收，窗口结束时的读数既不代表带宽、也解释不了「上传反而更高」。
+ * 分段还让在途字节数有硬上界（6 路 × 32MB），不会再打爆中间设备的队列。
+ */
+const SPEED_DL_CHUNK = 32 * 1024 * 1024;
+
+/**
+ * 流式上传（fetch + duplex:'half'）可用性记忆：null=尚未探测，true/false=已确认。
+ * 浏览器的流式请求体只在 h2/h3 上可用，而本系统的 HTTPS 监听器是 tls.NewListener +
+ * Serve（不会自动协商 h2），所以 https 页面下几乎必定失败。同一次页面会话里没必要
+ * 每轮都去等一次 ALPN 失败——记住结果直接走分片，把白跑的时间省下来。
+ */
+let speedStreamUpOk = null;
 
 /**
  * 延迟阶段最少样本数与最长时长：抖动用的 P95 至少二十来个样本才有意义（样本不足十个时
@@ -79,25 +114,34 @@ const stClamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
  */
 const DOWN_WORKER_SRC = `
 'use strict';
-let bytes = 0, ctrl = null;
+let bytes = 0, ctrl = null, stopped = false;
 const send = t => postMessage({ t: t, b: bytes });
+// 定长分段循环：一条响应读完立刻发下一条（对应 LibreSpeed 的 testStream：onload 后重新发起）。
+// 与「一条长连接读到窗口结束」相比，每个请求都有明确终点，浏览器不必把服务端写进
+// 缓冲的量当成已收到；片与片之间只差一个往返，却把在途数据锁在片长以内。
+const loop = async (url, token, signal) => {
+    while (!stopped) {
+        const r = await fetch(url, { headers: { 'X-Token': token }, cache: 'no-store', signal: signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const rd = r.body.getReader();
+        for (;;) {
+            const x = await rd.read();
+            if (x.done) break;
+            bytes += x.value.length;
+        }
+    }
+};
 onmessage = e => {
     const d = e.data || {};
     if (d.cmd === 'start') {
         bytes = 0;
+        stopped = false;
         ctrl = new AbortController();
         const hard = setTimeout(() => ctrl.abort(), d.hardMs);   // 链路彻底卡死也要收场
         const iv = setInterval(() => send('p'), d.iv);            // 定期把本路累计字节报给主线程
         (async () => {
             try {
-                const r = await fetch(d.url, { headers: { 'X-Token': d.token }, cache: 'no-store', signal: ctrl.signal });
-                if (!r.ok) throw new Error('HTTP ' + r.status);
-                const rd = r.body.getReader();
-                for (;;) {
-                    const x = await rd.read();
-                    if (x.done) break;
-                    bytes += x.value.length;
-                }
+                await loop(d.url, d.token, ctrl.signal);
             } catch (err) {
                 // 窗口到点的中断是正常收尾；其余异常报出去，成不了绩时由主线程给出失败原因
                 if (!err || err.name !== 'AbortError') postMessage({ t: 'e', b: bytes, m: String((err && err.message) || err) });
@@ -108,6 +152,7 @@ onmessage = e => {
             }
         })();
     } else if (d.cmd === 'stop') {
+        stopped = true;   // 先置位：中断当前片后循环不再发起下一片
         if (ctrl) ctrl.abort();
     }
 };
@@ -303,10 +348,10 @@ async function renderDashboard() {
           <span class="muted small" style="font-weight:400">（浏览器 ↔ 本系统链路，不经外部测速服务器）</span></h3>
         <div class="dash-speed-grid">
           <div class="dash-speed-tile"><div class="v" id="st-ping">${speedState.ping || '--'}</div><div class="l">延迟（中位往返）</div><div class="s" id="st-ping-sub">${speedState.pingSub || ''}</div></div>
-          <div class="dash-speed-tile"><div class="v" id="st-jitter">${speedState.jitter || '--'}</div><div class="l">抖动（P95 − 中位）</div><div class="s" id="st-jitter-sub">${speedState.jitterSub || ''}</div></div>
+          <div class="dash-speed-tile"><div class="v" id="st-jitter">${speedState.jitter || '--'}</div><div class="l">抖动（相邻 RTT 加权）</div><div class="s" id="st-jitter-sub">${speedState.jitterSub || ''}</div></div>
           <div class="dash-speed-tile"><div class="v" id="st-loss">${speedState.loss || '--'}</div><div class="l">丢包率（${Math.round(SPEED_TEST_MS / 1000)} 秒探测）</div><div class="s"></div></div>
           <div class="dash-speed-tile"><div class="v" id="st-down">${speedState.down || '--'}</div><div class="l">下载速率</div><div class="s" id="st-down-sub">${speedState.downSub || ''}</div></div>
-          <div class="dash-speed-tile"><div class="v" id="st-up">${speedState.up || '--'}</div><div class="l">上传速率</div><div class="s"></div></div>
+          <div class="dash-speed-tile"><div class="v" id="st-up">${speedState.up || '--'}</div><div class="l">上传速率</div><div class="s" id="st-up-sub">${speedState.upSub || ''}</div></div>
         </div>
         <div class="dash-speed-prog${speedState.running ? '' : ' hidden'}">
           <div class="st-prog-steps" id="stProgSteps">${speedStepsHtml(speedState.running, speedState.progIdx)}</div>
@@ -334,10 +379,10 @@ async function renderDashboard() {
 }
 
 /**
- * 网络测速：延迟/丢包、下载、上传三个阶段各测 10 秒（延迟阶段还给出抖动 = P95 − P50 往返）。
- * 速率阶段多路并发拉/推流；测量前先短时预热全部并发连接（按时间封顶，小带宽链路不拖总时长），
- * 避免新建连接的握手与 TCP 慢启动计入测量窗口；下载读流放在每连接各自的 Worker 里，
- * 上传优先流式推流（fetch duplex），
+ * 网络测速：延迟/丢包、下载、上传三个阶段各测 10 秒（抖动按 LibreSpeed 的相邻 RTT 加权）。
+ * 速率阶段多路并发拉/推流，并统一采用 LibreSpeed 的口径：先预热建立连接，测量开始后
+ * 再丢弃一段稳态窗口（下载 1.5s / 上传 3s）不计量，只统计链路灌满之后的平均；
+ * 下载每路按定长分段循环拉取（而非无界 chunked 长连接），上传优先流式推流，
  * 让连接全程满载而非整片上传后空等响应往返；测速期间暂停仪表盘自动刷新与顶栏监控轮询，
  * 避免额外请求抢占浏览器同源连接数与服务端 CPU 干扰测量；三阶段按权重计入顶部进度条。
  */
@@ -358,7 +403,7 @@ async function runSpeedTest() {
         if (el) el.textContent = v;
     };
     ['ping', 'loss', 'down', 'up', 'jitter'].forEach(k => setV(k, '--'));
-    ['pingSub', 'jitterSub', 'downSub'].forEach(k => setV(k, ''));
+    ['pingSub', 'jitterSub', 'downSub', 'upSub'].forEach(k => setV(k, ''));
     syncBtn();
     setRefresh(null);    // 停掉 15 秒整页重绘（其聚合请求会抢连接与 CPU）
     stopSysMetrics();    // 停掉顶栏 5 秒监控轮询
@@ -414,7 +459,7 @@ async function runSpeedTest() {
         lastUi = t;
         return true;
     };
-    const rate = (bytes, since) => fmtMbps(bytes / ((performance.now() - since) / 1000));
+    // 速率展示统一带稳态口径与开销补偿（见 SPEED_OVERHEAD）：实时值与最终值用同一把尺子
     try {
         // 1) 延迟与丢包：小载荷连续往返，5 秒未回计一次丢失
         const probe = async () => {
@@ -437,30 +482,39 @@ async function runSpeedTest() {
         progEnter(0);
         await probe();
         await probe();
-        // 取中位数而非平均值：少量尖峰（NAS 掉频/GC/Docker 抖动）会把均值大幅拉高，
-        // 中位数才代表链路的典型往返（LibreSpeed 等也只报低分位/最小值）
-        // 抖动取“P95 − P50”（即 ITU-T G.114 的网络性抖动 ipdv，主流测速站同算法）：
-        // 中位数掩盖链路稳定性，往返散布才反映网页卡顿体感（无线中继信号抖动、NAS 掉频、
-        // GC 停顿都先在这里现形）；而“最高 − 最低”会把一次偶然毛刺直接算进结果——
-        // 单个 1 秒尖峰就能把抖动报成 1000ms，与链路典型质量无关。分位法放过最极端的 5%，
-        // 在小带宽/高延迟链路上也更有可比性（下面小字仍给出最低~最高全区间，便于对照离群值）
+        // 延迟取中位数而非平均值：少量尖峰（NAS 掉频/GC/Docker 抖动）会把均值大幅拉高，
+        // 中位数才代表链路的典型往返。
+        // 抖动主值改用 LibreSpeed 的相邻 RTT 加权（pingTest 里的 instjitter 累积）：
+        // 对相邻两次往返的绝对差做加权移动平均，尖刺给更大权重（上升 0.3/0.7、下降 0.8/0.2）。
+        // 旧的 P95−P50 反映的是“往返散布”，在本来就有方差的链路上会明显偏大
+        // （同一条链路实测 P95−P50 报 82ms、LibreSpeed 只报 8~12ms，两边根本不可比）；
+        // 它仍能看出离群幅度，降为小字里的对照项。
         const samples = [];
         let lost = 0;
         // 分位取样：排序后按比例取位置（样本极少时自然退化为最值，仍是有效估计）
         const quant = (a, p) => a[Math.min(a.length - 1, Math.floor(p * a.length))];
+        // LibreSpeed 口径：首两个样本只能建立基线，从第三个开始累积
+        const jitterEma = () => {
+            let jit = 0;
+            for (let i = 1; i < samples.length; i++) {
+                const inst = Math.abs(samples[i] - samples[i - 1]);
+                if (i === 1) jit = inst;
+                else jit = inst > jit ? jit * 0.3 + inst * 0.7 : jit * 0.8 + inst * 0.2;
+            }
+            return jit;
+        };
         const stat = () => {
             if (!samples.length) return null;
             const a = samples.slice().sort((x, y) => x - y);
             const p50 = quant(a, 0.5), p95 = quant(a, 0.95);
-            return { med: p50, lo: a[0], hi: a[a.length - 1], jit: p95 - p50 };
+            return { med: p50, lo: a[0], hi: a[a.length - 1], jit: p95 - p50, ema: jitterEma() };
         };
         const showPing = s => {
             setV('ping', Math.round(s.med) + ' ms');
             setV('pingSub', '最低 ' + Math.round(s.lo) + ' · 最高 ' + Math.round(s.hi) + ' ms');
-            setV('jitter', Math.round(s.jit) + ' ms');
-            // 样本不足时标一句“偏少”：二几个样本里的 P95 基本就是最大值，这一轮的抖动
-            // 只能当“单次毛刺幅度”看，不能与样本几百的局域网那轮拉同一把尺子
-            setV('jitterSub', 'P95−P50 · 样本 ' + samples.length
+            // 样本不足三个时算不出相邻差，退回报 P95−P50（至少不会把抖动报成 0）
+            setV('jitter', Math.round(samples.length >= 3 ? s.ema : s.jit) + ' ms');
+            setV('jitterSub', 'P95−P50 ' + Math.round(s.jit) + ' ms · 样本 ' + samples.length
                 + (samples.length < SPEED_PING_MIN_SAMPLES ? '（偏少）' : '')
                 + (lost ? ' · 丢失 ' + lost : ''));
         };
@@ -514,12 +568,26 @@ async function runSpeedTest() {
         } catch (e) {
             if (e.name !== 'AbortError') throw e;
         }
-        // ms 只是服务端单请求最长存活时间的兜底，取得比窗口长一些，确保正常收尾由浏览器中断触发
-        const downUrl = DOWN_URL + '?ms=' + (SPEED_TEST_MS + 5000);
+        // 定长分段：每个请求都有 Content-Length 与明确终点，收完由 Worker 立刻发下一片。
+        // 旧实现用 ?ms= 的无界 chunked 长连接，服务端往内核缓冲里灌多少与浏览器收到多少
+        // 完全脱钩（dev220 实测：11 秒内网卡 TX 208MB，浏览器实际收到 88MB）。
+        const downUrl = DOWN_URL + '?bytes=' + SPEED_DL_CHUNK;
         let got = 0;
         progMeasure();
         const tD = performance.now();
-        const paintDown = () => { if (tick()) setV('down', rate(got, tD)); };
+        // 稳态基线：到 SPEED_DL_GRACE_MS 时把已收字节与起点一起抹掉（LibreSpeed 的 grace 重置）。
+        // 用「基线快照」而不是清零累加器：各路累计值在 Worker 手里、主线程只有快照，
+        // 相减与清零在数学上等价，却不会与 Worker 的下一次上报抢状态。
+        let dlBase = 0, dlT0 = tD, graced = false;
+        const dlSecs = () => Math.max((performance.now() - dlT0) / 1000, 0.2);
+        const paintDown = () => { if (tick()) setV('down', fmtMbps((got - dlBase) / dlSecs() * SPEED_OVERHEAD)); };
+        // 稳态起点：到点把“此前已收字节”作为基线扣除，只统计链路灌满之后的部分。
+        // 定时器提到分支外：Worker 与主线程回退两条路径都要用同一个口径。
+        const dlGrace = setTimeout(() => {
+            dlBase = got;
+            dlT0 = performance.now();
+            graced = true;
+        }, SPEED_DL_GRACE_MS);
         // 首选：每连接一个 Worker 读流并在线程内计数（见 DOWN_WORKER_SRC 说明）
         let downPartial = '';
         const downWorkers = async () => {
@@ -570,22 +638,26 @@ async function runSpeedTest() {
                 URL.revokeObjectURL(objUrl);
             }
         };
-        // 回退：主线程读流，语义与 Worker 版一致（到点统一中断，服务端踩到断连即静默收尾）
+        // 回退：主线程读流，语义与 Worker 版一致：逐片循环拉，到点统一中断
         const downMain = async () => {
             const downAbort = new AbortController();
             const downStop = setTimeout(() => downAbort.abort(), SPEED_TEST_MS);          // 窗口到点：中断即测完
             const downGuard = setTimeout(() => downAbort.abort(), SPEED_TEST_MS + 15000); // 链路彻底卡死也要收场
             const pull = async () => {
                 try {
-                    const resp = await fetch(downUrl,
-                        { headers: { 'X-Token': TOKEN }, cache: 'no-store', signal: downAbort.signal });
-                    if (!resp.ok) throw new Error('下载测速请求失败: HTTP ' + resp.status);
-                    const reader = resp.body.getReader();
-                    for (;;) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
-                        got += value.length;
-                        paintDown();
+                    // 片收完必须接着发下一片：定长响应的流读一次就 EOF，
+                    // 旧版靠无界 chunked 才“一条连接读到窗口结束”，改成定长后没有循环就等于只测了一片
+                    while (!downAbort.signal.aborted) {
+                        const resp = await fetch(downUrl,
+                            { headers: { 'X-Token': TOKEN }, cache: 'no-store', signal: downAbort.signal });
+                        if (!resp.ok) throw new Error('下载测速请求失败: HTTP ' + resp.status);
+                        const reader = resp.body.getReader();
+                        for (;;) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            got += value.length;
+                            paintDown();
+                        }
                     }
                 } catch (e) {
                     if (e.name === 'AbortError') return; // 窗口到点中断：正常收尾，不是失败
@@ -601,12 +673,20 @@ async function runSpeedTest() {
             return got;
         };
         if ((await downWorkers().catch(() => null)) === null) await downMain();
+        clearTimeout(dlGrace);
         if (!got) throw new Error('下载测速未收到数据');
-        if (downPartial) setV('downSub', downPartial);
+        if (!graced) { // 窗口内连 1.5 秒基线都没等到（极端卡死）：退化为整段平均，不虚报
+            dlBase = 0;
+            dlT0 = tD;
+        }
         // 下载阶段的带宽（字节/秒）作为上传阶段分片与入块的种子：先量一下链路再推流，
         // 比从固定 128KB 逐轮往上爬更快（本地万兆链路要爬好几轮才能到顶，而慢速上行并不需要从128KB 再往上走）
-        const downBps = got / Math.max((performance.now() - tD) / 1000, 0.2);
-        setV('down', rate(got, tD));
+        const downBps = Math.max((got - dlBase) / dlSecs(), 0);
+        setV('down', fmtMbps(downBps * SPEED_OVERHEAD));
+        setV('downSub', [
+            graced ? '稳态 ' + (SPEED_DL_GRACE_MS / 1000) + 's 后' : '全程平均',
+            SPEED_STREAMS + ' 路 × ' + Math.round(SPEED_DL_CHUNK / 1048576) + 'MB 分段'
+        ].concat(downPartial ? [downPartial] : []).join(' · '));
 
         // 3) 上传速率：https 页面优先流式推流（fetch + duplex:'half'）——整条连接 10 秒连续满载。
         //    旧“整片 POST 等响应再发下一片”的模式，每片之间连接空转一个往返周期，
@@ -621,10 +701,12 @@ async function runSpeedTest() {
         const UP_URL = API_BASE + '/api/system/speedtest/up';
         progEnter(2); // 负载池生成（8MB 随机器）也算本阶段开销，先进预热段顶着
         const UP_POOL = 8 * 1024 * 1024;
-        // 单片上限 32MB：10Gbps 链路下 8MB 一片只要 6ms，每片的请求建立、响应解析与主线程收尾
+        // 单片上限 8MB：10Gbps 链路下 8MB 一片只要 6ms，每片的请求建立、响应解析与主线程收尾
         // 会反复插在数据流里，速率既上不去也稳不住（同一链路用 Node 六路 8MB 片只跑到 11Gbps）。
         // 上限放大不会拖慢链：慢链路下分片由下面的“约 2 秒一片”自适应缩到几百 KB，碰不到上限。
-        const UP_CHUNK_MAX = 32 * 1024 * 1024;
+        // 但也不能无限放大：片上到几十 MB 时，慢上行链路下单片就要跑十几秒，
+        // 整个测量窗口都卡在等那一片返回上（实测：32MB 片在 10Mbps 上行要 26 秒）。
+        const UP_CHUNK_MAX = 8 * 1024 * 1024;
         // 流式入块取约 50ms 的链路量（按刚测出的下载带宽折算），夹在 64KB~1MB：
         // 块太小则每块一次 JS 入块回调，快链路被这个开销卡住；块太大则窗口结束时
         // 每路还压着一整块待排空（2Mbps 链路上 1MB 块就是 4 秒尾巴），慢链路反而被尾巴拖死
@@ -684,7 +766,7 @@ async function runSpeedTest() {
                         else {
                             controller.enqueue(upBlock);
                             sent += UP_BLOCK;
-                            if (tick()) setV('up', rate(sent, tU));
+                            if (tick()) setV('up', fmtMbps(sent / Math.max((performance.now() - tU) / 1000, 0.2) * SPEED_OVERHEAD));
                         }
                     }
                 }),
@@ -696,12 +778,19 @@ async function runSpeedTest() {
                 return (j.data && j.data.bytes) || 0;
             });
         };
-        // 流式轮：先预热再正式测量，各自独立兜底（预热卡死不致命，不能把正式窗口一起带走）
+        // 流式轮：先探测通道是否真可用，再用 3 秒稳态丢弃 + 正式测量。
+        // 探测失败（https 但服务端未启用 h2）只花两三秒就降级；旧实现要白跑 8 秒预热。
         const streamRound = async () => {
-            // 预热：下载阶段的连接对发送方向未经考验，先让全部连接度过 TCP 慢启动（不计入测量）；
-            // 兜底按时间封顶，小带宽链路上六路各推几百 KB 就能跑十几秒，不能把整轮测速拖长
-            await phaseRun(8000, s =>
-                Promise.all(Array.from({ length: SPEED_STREAMS }, () => streamUp(600, s)))).catch(() => { });
+            if (speedStreamUpOk !== true) {
+                const keep = sent;
+                await phaseRun(2500, s => streamUp(400, s));
+                sent = keep;   // 探测字节不属于测量，不能计入实时值
+                speedStreamUpOk = true;
+            }
+            // 预热与稳态丢弃合并：六路连推 3 秒不计，上下行队列、拥塞窗口与服务端读缓冲
+            // 全部在这段里到位；兜底按时间封顶，慢链路不能把整轮测速拖成分钟级
+            await phaseRun(SPEED_UP_GRACE_MS + 8000, s =>
+                Promise.all(Array.from({ length: SPEED_STREAMS }, () => streamUp(SPEED_UP_GRACE_MS, s))));
             progMeasure();
             sent = 0;
             tU = performance.now();
@@ -710,27 +799,42 @@ async function runSpeedTest() {
                 Promise.all(Array.from({ length: SPEED_STREAMS }, () => streamUp(SPEED_TEST_MS, s))));
             const upTotal = ups.reduce((a, b) => a + b, 0);
             if (!upTotal) throw new Error('上传测速未发出数据');
-            setV('up', rate(upTotal, tU));
+            setV('up', fmtMbps(upTotal / Math.max((performance.now() - tU) / 1000, 0.2) * SPEED_OVERHEAD));
+            setV('upSub', '稳态 ' + (SPEED_UP_GRACE_MS / 1000) + 's 后 · 流式 · 服务端确认');
         };
         // 定长分片轮：http:// 下的唯一上传通道，也是 https 下流式不可用时的降级路径。
         // 分片大小自适应到约 2 秒一片：固定大分片在慢速上行（远程/4G）下单片要跑几十秒，
         // 窗口结束后还得干等它跑完，这正是“测速一分多钟不结束”的另一个来源。
         // 首片取 128KB：慢链路下首片也能几秒内跑完，自适应立即收敛，而不是六路各自卡在首片。
         const chunkRound = async () => {
-            const tC = performance.now();
-            progMeasure(); // 分片轮无独立预热（首片兼任），直接从测量段起算
+            const tC0 = performance.now();
+            let tC = tC0, graced = false;
+            const upSeconds = () => Math.max((performance.now() - tC) / 1000, 0.2);
+            // 不在这里 progMeasure：3 秒稳态丢弃期进度留在预热段（首片兼任预热）；
+            // 到点才切测量段，否则进度按 10 秒先跑一截再重置，看起来像卡了一下
             // 首片大小由下载阶段的带宽与中位往返算带宽延迟积（每路一片刚好填满约一个往返）：
             // 千兆/万兆本地链路因此第一步就落到 MB 级，不必从 128KB 一轮轮往上爬——
             // 爬级期间的低速率会把整轮平均拉低，同一链路两次上传跑出数倍差距主要就源于此；
             // 小带宽链路算出来仍是最小 128KB，行为与原来一致（上行不对称时由 2 秒目标修正）
             const rttMs = sp ? sp.med : 30;
             const seed = stClamp(Math.round(downBps * rttMs / 1000 / SPEED_STREAMS), 128 * 1024, UP_CHUNK_MAX);
-            let total = 0, size = seed;
+            let total = 0, size = Math.min(seed, 256 * 1024);
+            // 稳态丢弃用独立定时器，不放在循环里：单片可能耗掉整个窗口（慢上行 + 大分片），
+            // 循环体的检查会一次也跑不到，grace 永不生效、进度永远停在预热段（实测卡在 71%）。
+            // 定时器到点就直接清零，与 LibreSpeed 用 setInterval 检查的做法一致。
+            const graceTimer = setTimeout(() => {
+                total = 0;
+                tC = performance.now();
+                graced = true;
+                progMeasure();
+            }, SPEED_UP_GRACE_MS);
             try {
-                await phaseRun(SPEED_TEST_MS + 30000, async signal => {
+                // 窗口到点即 abort（留 5 秒收尾）：不等正在飞的那一片——
+                // 慢上行下单片拖住几十秒，“测速中”就会一直挂在那里
+                await phaseRun(SPEED_UP_GRACE_MS + SPEED_TEST_MS + 5000, async signal => {
                     const push = async () => {
                         try {
-                            while (performance.now() - tC < SPEED_TEST_MS) {
+                            while (performance.now() - tC0 < SPEED_UP_GRACE_MS + SPEED_TEST_MS) {
                                 const body = upBody(size);
                                 const t0 = performance.now();
                                 const r = await fetch(UP_URL, {
@@ -742,11 +846,12 @@ async function runSpeedTest() {
                                 if (!r.ok) throw new Error('上传测速请求失败: HTTP ' + r.status);
                                 const j = await r.json();
                                 total += (j.data && j.data.bytes) || size;
-                                // 用这一片的实际耗时把下一片缩放到约 2 秒，单轮最多放缩 4 倍：
-                                // 不限步长时快链路上首几片就能顶到上限，窗口结束后还得等它跑完
+                                // 用这一片的实际耗时把下一片缩放到约 2 秒，单轮最多放缩 2 倍：
+                                // 放大步长必须收紧——上一片跑得快往往只是管道缓冲吸收了，
+                                // 按 4 倍连缀放大几轮就会顶到上限，然后在大分片上卡死整个窗口（实测）
                                 const dt = Math.max(performance.now() - t0, 50);
-                                size = stClamp(Math.round(size * stClamp(2000 / dt, 0.25, 4)), 128 * 1024, UP_CHUNK_MAX);
-                                if (tick()) setV('up', rate(total, tC));
+                                size = stClamp(Math.round(size * stClamp(2000 / dt, 0.5, 2)), 128 * 1024, UP_CHUNK_MAX);
+                                if (tick()) setV('up', fmtMbps(total / upSeconds() * SPEED_OVERHEAD));
                             }
                         } catch (e) {
                             // 单路异常（链路抖动、服务端兜底断开）：该路收工即可，
@@ -760,16 +865,22 @@ async function runSpeedTest() {
                 // 兜底超时打断：慢链路上最后一片可能还在路上拿不到服务端确认，
                 // 但已确认的字节数仍是有效测量结果，不能因此把整个测速报成失败
                 if (e.name !== 'AbortError' || !total) throw e;
+            } finally {
+                clearTimeout(graceTimer);
             }
             if (!total) throw new Error('上传测速未发出数据');
-            setV('up', rate(total, tC));
+            setV('up', fmtMbps(total / upSeconds() * SPEED_OVERHEAD));
+            setV('upSub', (graced ? '稳态 ' + (SPEED_UP_GRACE_MS / 1000) + 's 后' : '全程平均')
+                + ' · ' + SPEED_STREAMS + ' 路分片 · 服务端确认');
         };
-        if (canStreamUp) {
+        if (canStreamUp && speedStreamUpOk !== false) {
             try {
                 await streamRound();
             } catch (se) {
                 // 流式实际不可用（如 https 站点未启用 HTTP/2）或彻底卡死：降级为定长分片重测
+                speedStreamUpOk = false;
                 setV('up', '--');
+                setV('upSub', '');
                 await chunkRound();
             }
         } else {
