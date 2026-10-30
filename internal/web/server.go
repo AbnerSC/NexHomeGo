@@ -205,17 +205,34 @@ const maxAPIBodyBytes = 8 << 20
 // 站点包动辄几十上百 MB，复用 8 MB 上限会让上传一律 413。
 const maxUploadBodyBytes = 512 << 20
 
+// maxAuthBodyBytes 免登录鉴权接口（登录/状态检查）的请求体上限。
+// 这两个接口在认证之前就要把请求体读进内存并解析，与业务接口共用 8 MB 时，
+// 匿名攻击者只需并发若干个大包即可把 CPU（实测单个 7 MB 包解析耗时约 3 秒）与内存放大数十倍，
+// 而登录表单实际只有几十字节，因此单独收紧到 16 KB。
+const maxAuthBodyBytes = 16 << 10
+
 // unboundedBodyPath 允许任意长度请求体的接口（流式测速上行）。
 func unboundedBodyPath(p string) bool {
 	return p == "/api/system/speedtest/up"
 }
 
-// apiBodyLimit 按接口给出请求体上限：zip 上传单独放宽，其余接口仍为 8 MB。
+// apiBodyLimit 按接口给出请求体上限：zip 上传单独放宽、免登录鉴权接口单独收紧，其余接口为 8 MB。
 func apiBodyLimit(p string) int64 {
-	if p == "/api/proxy/sites/upload" {
+	switch p {
+	case "/api/proxy/sites/upload":
 		return maxUploadBodyBytes
+	case "/api/auth/login", "/api/auth/check":
+		return maxAuthBodyBytes
 	}
 	return maxAPIBodyBytes
+}
+
+// fmtLimit 人类可读的请求体上限文案（16 KB / 8 MB / 512 MB），避免小上限被显示成 "0 MB"。
+func fmtLimit(limit int64) string {
+	if limit >= 1<<20 {
+		return strconv.FormatInt(limit>>20, 10) + " MB"
+	}
+	return strconv.FormatInt(limit>>10, 10) + " KB"
 }
 
 // canonicalPath 判断请求路径是否已规范化：拒绝重复斜杠、点段与非规范尾斜杠。
@@ -236,12 +253,19 @@ func canonicalPath(p string) bool {
 }
 
 // setSecurityHeaders 统一安全响应头：阻止 MIME 嗅探、点击劫持与 Referer 泄漏 token。
+// CSP 说明：前端为原生 JS，页面内以 innerHTML  + onclick 形式渲染列表操作按钮，
+// 必须保留 'unsafe-inline'（否则整站按钮失效），但 default-src 'self' 仍能拦住
+// 外部域脚本引用（<script src=//evil>）与 object/base 注入；frame-ancestors 与 XFO 双保险。
 func setSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-XSS-Protection", "0")
+	h.Set("Content-Security-Policy",
+		"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
+			"img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' https: http:; "+
+			"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 }
 
 // launch 构建并启动一个 Web 实例（HTTP 监听器 + 可选 HTTPS 监听器），绑定失败返回错误。
@@ -252,6 +276,9 @@ func launch(snap *Snapshot, https bool, cert *CertInfo, httpPort int, selfHeal b
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       120 * time.Second, // 整个请求（含请求体）读取上限，防慢速请求体长期占用连接（8MB 上限下允许最低 66KB/s）
 		IdleTimeout:       120 * time.Second, // 空闲长连接回收；写超时保持 0，兼容大文件下载与测速
+		// 头部总量 64KB：默认 1MB 意味着未认证连接可先用近 1MB 头部占住内存，
+		// 与反向代理侧 MaxHeaderBytes 保持一致。
+		MaxHeaderBytes: 64 << 10,
 	}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", httpPort))
 	if err != nil {
@@ -310,6 +337,7 @@ func mountHTTPS(httpsPort int, cert *CertInfo, selfHeal bool) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       120 * time.Second,
 		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 	raw, err := net.Listen("tcp", fmt.Sprintf(":%d", httpsPort))
 	if err != nil {
@@ -438,6 +466,12 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 		innerPath = path
 	}
 
+	// 接口响应可能含会话令牌、AccessKey、证书私钥路径等敏感数据，
+	// 统一禁止浏览器与中间代理缓存（先于鉴权写入，401 响应同样不缓存）。
+	if strings.HasPrefix(innerPath, "/api/") {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+
 	// 鉴权前置：/api/** 除登录与登录状态检查外均需有效凭证。
 	// 两种方式等价：会话令牌（X-Token，或只读方法的 ?token=）或接口访问令牌（Access-Token 请求头，
 	// 由系统设置页配置，供其他系统/脚本长期调用，不参与单点登录）。
@@ -472,7 +506,7 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.ContentLength > limit {
 			writeFail(w, http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("请求体过大（上限 %d MB）", limit>>20))
+				fmt.Sprintf("请求体过大（上限 %s）", fmtLimit(limit)))
 			return
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
@@ -588,10 +622,7 @@ func writeFail(w http.ResponseWriter, code int, msg string) {
 }
 
 func toHTTPSURL(r *http.Request, httpsPort int) string {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
+	host := redirectHost(r)
 	portPart := ""
 	if httpsPort != 443 {
 		portPart = ":" + strconv.Itoa(httpsPort)
@@ -601,6 +632,44 @@ func toHTTPSURL(r *http.Request, httpsPort int) string {
 		q = "?" + q
 	}
 	return "https://" + host + portPart + r.URL.Path + q
+}
+
+// redirectHost 生成跳转目标主机。Host 头完全由客户端控制，直接拼进 Location
+// 会把面板变成任意域名的开放重定向（可被钓鱼/DNS rebinding 利用），
+// 因此只接受合法主机名或 IP，其余（含非法字符、空值）回退到本地监听地址。
+func redirectHost(r *http.Request) string {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if validHostLiteral(host) {
+		return host
+	}
+	if la, ok := r.Context().Value(http.LocalAddrContextKey).(net.Addr); ok {
+		if h, _, err := net.SplitHostPort(la.String()); err == nil && validHostLiteral(h) {
+			return h
+		}
+	}
+	return "localhost"
+}
+
+// validHostLiteral 主机名/IP 格式校验：仅字母数字与 - . :，且长度为 1~253。
+// 不允许出现 / @ 空白等可改变 URL 语义的字符。
+func validHostLiteral(s string) bool {
+	if s == "" || len(s) > 253 {
+		return false
+	}
+	if net.ParseIP(strings.Trim(s, "[]")) != nil {
+		return true
+	}
+	for _, c := range s {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // portCandidates 启动期候选端口：期望端口 → 向后 autoFallback 个 → 内核随机(0)。跳过 HTTPS 端口。

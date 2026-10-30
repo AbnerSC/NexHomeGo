@@ -3,6 +3,7 @@ package web
 import (
 	"crypto/tls"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,62 @@ func TestServeHTTPSHSTS(t *testing.T) {
 	serveHTTP(rec, r)
 	if rec.Header().Get("Strict-Transport-Security") == "" {
 		t.Fatal("HTTPS 响应缺少 Strict-Transport-Security")
+	}
+}
+
+// TestServeHTTPCSP 面板页面必须下发 CSP（拦住外部脚本引用与 object/base 注入）。
+func TestServeHTTPCSP(t *testing.T) {
+	rec := httptest.NewRecorder()
+	serveHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("缺失 Content-Security-Policy")
+	}
+	for _, want := range []string{"default-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"} {
+		if !strings.Contains(csp, want) {
+			t.Fatalf("CSP 缺少 %q: %s", want, csp)
+		}
+	}
+}
+
+// TestAuthBodyLimit 免登录接口必须单独收紧请求体上限：匿名大包只需少量并发就能致命。
+func TestAuthBodyLimit(t *testing.T) {
+	for _, p := range []string{"/api/auth/login", "/api/auth/check"} {
+		if got := apiBodyLimit(p); got != maxAuthBodyBytes {
+			t.Fatalf("%s 请求体上限=%d，期望 %d", p, got, maxAuthBodyBytes)
+		}
+	}
+	if got := apiBodyLimit("/api/logs"); got != maxAPIBodyBytes {
+		t.Fatalf("普通接口上限被误改: %d", got)
+	}
+	if got := apiBodyLimit("/api/proxy/sites/upload"); got != maxUploadBodyBytes {
+		t.Fatalf("zip 上传上限被误改: %d", got)
+	}
+	rec := httptest.NewRecorder()
+	serveHTTP(rec, httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(strings.Repeat("a", int(maxAuthBodyBytes)+1024))))
+	if rec.Code != 413 {
+		t.Fatalf("超大登录请求应回 413，实际 %d", rec.Code)
+	}
+}
+
+// TestRedirectHost 强制 HTTPS 跳转的 Location 不得直接采信任意 Host（开放重定向 / 头注入）。
+func TestRedirectHost(t *testing.T) {
+	cases := map[string]string{
+		"panel.lan:8090":    "panel.lan",
+		"192.168.1.10:8090": "192.168.1.10",
+		"[::1]:8090":        "::1",
+	}
+	for host, want := range cases {
+		r := httptest.NewRequest("GET", "/x", nil)
+		r.Host = host
+		if got := redirectHost(r); got != want {
+			t.Fatalf("Host=%q 得到 %q，期望 %q", host, got, want)
+		}
+	}
+	// 含非法字符的 Host 一律回退（不得进入 Location）
+	r := httptest.NewRequest("GET", "/x", nil)
+	r.Host = "evil.com/path"
+	if got := redirectHost(r); got != "localhost" {
+		t.Fatalf("非法 Host 应回退到本地地址，实际 %q", got)
 	}
 }
