@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"NexHomeGo/internal/core"
 )
 
 // 静态站点发布（mode=STATIC）：路径防护与交付语义的回归测试。
@@ -68,6 +70,35 @@ func TestStaticRootDir(t *testing.T) {
 	// 加载期（checkExists=false）允许目录暂不存在：站点保留在路由表，请求期给出可读错误
 	if _, err := staticRootDir(filepath.ToSlash(dir)+"/later", false); err != nil {
 		t.Fatalf("加载期不应要求目录存在: %v", err)
+	}
+}
+
+// TestStaticRootDirDataDir 数据目录不得作为静态站点根（只放行其下的 html 发布目录）：
+// 否则误配置会把 nexhome.db / 证书 / 备份直接暴露为可下载的静态文件。
+func TestStaticRootDirDataDir(t *testing.T) {
+	data, err := filepath.Abs(core.DataDir())
+	if err != nil {
+		t.Fatalf("数据目录解析失败: %v", err)
+	}
+	html := filepath.Join(data, "html", "1")
+	certs := filepath.Join(data, "certs")
+	for _, d := range []string{html, certs} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatalf("创建目录失败: %v", err)
+		}
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(filepath.Join(data, "html"))
+		_ = os.RemoveAll(certs)
+	})
+	if _, err := staticRootDir(filepath.ToSlash(data), true); err == nil {
+		t.Fatalf("数据根目录应被拒绝")
+	}
+	if _, err := staticRootDir(filepath.ToSlash(certs), true); err == nil {
+		t.Fatalf("数据目录下的证书目录应被拒绝")
+	}
+	if _, err := staticRootDir(filepath.ToSlash(html), true); err != nil {
+		t.Fatalf("html 发布目录应放行: %v", err)
 	}
 }
 

@@ -186,6 +186,9 @@ func staticRootDir(target string, checkExists bool) (string, error) {
 	if !filepath.IsAbs(p) {
 		return "", fmt.Errorf("静态站点目录必须是绝对路径（如 /var/www/site 或 D:/www/site）: %s", v)
 	}
+	if err := guardDataDir(p); err != nil {
+		return "", err
+	}
 	if checkExists {
 		st, err := os.Stat(p)
 		if err != nil {
@@ -196,6 +199,28 @@ func staticRootDir(target string, checkExists bool) (string, error) {
 		}
 	}
 	return filepath.ToSlash(p), nil
+}
+
+// guardDataDir 拒绝把程序数据目录（DB / 证书 / 备份 / 图标）作为静态站点根，
+// 仅放行其下的 html 发布目录。否则一次误配置就能把 nexhome.db（含明文 access_token、
+// 密码哈希）以静态文件形式直接下载（实测 target=/app/data 时 GET /nexhome.db 返回 200）。
+func guardDataDir(p string) error {
+	dataAbs, err := filepath.Abs(core.DataDir())
+	if err != nil {
+		return nil
+	}
+	dataAbs = filepath.Clean(dataAbs)
+	p = filepath.Clean(p)
+	sep := string(filepath.Separator)
+	inData := p == dataAbs || strings.HasPrefix(p+sep, dataAbs+sep)
+	if !inData {
+		return nil
+	}
+	htmlAbs := filepath.Join(dataAbs, "html")
+	if p == htmlAbs || strings.HasPrefix(p+sep, htmlAbs+sep) {
+		return nil
+	}
+	return fmt.Errorf("静态站点目录不能使用程序数据目录: %s", filepath.ToSlash(p))
 }
 
 // validateDomains 域名合法性校验（创建/更新接口用）。
