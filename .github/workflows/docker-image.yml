@@ -6,11 +6,6 @@
 #   - 本文件只会被 GitHub 读取，推送到 Docker Hub 官方仓库
 #   - Gitea 侧工作流只会被 Gitea Actions 读取，推送到自建 Nexus
 #
-# 与 Java 侧同名工作流的差异（Go 迁移点）：
-#   - CGO（mattn/go-sqlite3）产物绑定目标架构，编译阶段无法固定
-#     BUILDPLATFORM，arm64 走 QEMU 模拟编译（比 Java 纯 jar 构建慢，
-#     超时放宽到 90 分钟）
-#
 # 触发方式：
 #   - 推送 release-v 开头的 tag（如 release-v1.2.3）自动构建，
 #     推送 版本号（1.2.3）+ latest 标签

@@ -6,11 +6,6 @@
 #   - GitHub 侧工作流只会被 GitHub 读取，推送到 Docker Hub
 #   - 本文件只会被 Gitea Actions 读取，推送到自建 Nexus
 #
-# 与 Java 侧同名工作流的差异（Go 迁移点）：
-#   - Maven 依赖镜像换成 GOPROXY 模块代理（加速 go mod download）
-#   - 编译工具链镜像 maven 换成 golang；CGO 产物绑定目标架构，
-#     本工作流仅构建 amd64（runner 原生架构），无需 QEMU
-#
 # 触发方式：
 #   - 推送 release-v 开头的 tag（如 release-v1.2.3）自动构建，
 #     推送 版本号（1.2.3）+ latest 标签
@@ -25,6 +20,10 @@
 #                        nexus.example.com:8082 或 nexus.example.com/repository/docker-releases）
 #       NEXUS_USERNAME   Nexus 账号
 #       NEXUS_PASSWORD   Nexus 密码
+#       GOPROXY_URL      Go 模块代理地址
+#                        留空则回退 Go 官方默认代理）
+#       DOCKER_PROXY     Docker Hub 代理仓库前缀
+#                        留空则直连 docker.io 拉取基础镜像）
 #   - 已注册可用的 act_runner（能跑 Docker 构建；labels 与下方 runs-on 一致）
 # =====================================================================
 name: Docker 镜像构建（Nexus）
@@ -45,16 +44,18 @@ permissions:
 
 env:
   IMAGE_NAME: nex-home
+  # 以下两项取自 Gitea 全局环境变量（实例级/组织级/仓库级均可，名称不变），
+  # 更换代理地址时只需改 Gitea 侧配置，无需改动本文件
   # 自托管 runner 在国内，经 Nexus 的 Go 模块代理下载依赖加速构建
   # （GitHub 侧工作流不注入，走官方 proxy.golang.org）；置空则回退 Go 默认代理
-  # 若 Nexus 建有 go 模块代理仓库（如 repository/go-group），改为对应地址即可
-  GOPROXY_URL: https://repo.pi.mmxx.fun/repository/go-public,direct
+  GOPROXY_URL: ${{ vars.GOPROXY_URL }}
+  # buildkit（docker-container driver）拉取镜像不走 docker daemon 的 registry-mirrors，
+  # 基础镜像需显式经 Nexus 的 docker 代理仓库拉取，避免 runner 直连 docker.io 超时；
+  # 置空则回退官方 golang/debian 镜像
+  DOCKER_PROXY: ${{ vars.DOCKER_PROXY }}
   # 运行阶段安装 ca-certificates/tzdata/curl 时经公共镜像源加速
   # （GitHub 侧不注入，直接使用官方 deb.debian.org）
   APT_MIRROR: repo.huaweicloud.com
-  # buildkit（docker-container driver）拉取镜像不走 docker daemon 的 registry-mirrors，
-  # 基础镜像需显式经 Nexus 的 docker 代理仓库拉取，避免 runner 直连 docker.io 超时
-  DOCKER_PROXY: repo.pi.mmxx.fun/docker-public
 
 jobs:
   build-and-push:
@@ -102,6 +103,24 @@ jobs:
             echo "解析出版本号：$TAG"
           fi
 
+      # DOCKER_PROXY 为空时直接使用官方镜像地址，避免拼出 "/library/..." 这类非法引用
+      - name: 解析基础镜像地址
+        shell: bash
+        run: |
+          if [[ -n "$DOCKER_PROXY" ]]; then
+            PROXY="${DOCKER_PROXY%/}"
+            GO_IMAGE="${PROXY}/library/golang:1.27-bookworm"
+            BASE_IMAGE="${PROXY}/library/debian:bookworm-slim"
+          else
+            GO_IMAGE="golang:1.27-bookworm"
+            BASE_IMAGE="debian:bookworm-slim"
+          fi
+          echo "GO_IMAGE=$GO_IMAGE" >> "$GITHUB_ENV"
+          echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
+          echo "Go 模块代理：${GOPROXY_URL:-（未配置，使用 Go 官方默认代理）}"
+          echo "编译镜像：$GO_IMAGE"
+          echo "运行镜像：$BASE_IMAGE"
+
       # 仅构建 linux/amd64 单架构（runner 原生架构），Go 编译阶段无需 QEMU 跨架构模拟
       - name: 设置 Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -145,8 +164,8 @@ jobs:
             GOPROXY=${{ env.GOPROXY_URL }}
             APT_MIRROR=${{ env.APT_MIRROR }}
             VERSION=${{ steps.version.outputs.version }}
-            GO_IMAGE=${{ env.DOCKER_PROXY }}/library/golang:1.27-bookworm
-            BASE_IMAGE=${{ env.DOCKER_PROXY }}/library/debian:bookworm-slim
+            GO_IMAGE=${{ env.GO_IMAGE }}
+            BASE_IMAGE=${{ env.BASE_IMAGE }}
           # 关闭 provenance 证明，避免部分客户端拉取时出现 unknown digest
           provenance: false
           # 使用 Actions 缓存加速 go 依赖层复用
