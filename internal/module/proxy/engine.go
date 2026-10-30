@@ -82,9 +82,10 @@ func engineStart(c engineCfg) (string, error) {
 	}))
 	h2srv := &http2.Server{}
 	httpSrv = &http.Server{
-		Handler:        h2c.NewHandler(mux, h2srv),
-		MaxHeaderBytes: 65536,             // 头部总量 64KB（对齐 Java MAX_HEADER_SIZE；超限由 Go 回 431）
-		IdleTimeout:    300 * time.Second, // 前端连接 300 秒空闲回收
+		Handler:           h2c.NewHandler(mux, h2srv),
+		ReadHeaderTimeout: 10 * time.Second,  // 慢速头部（slowloris）连接回收：无此限制时半截头可长期占住连接
+		MaxHeaderBytes:    65536,             // 头部总量 64KB（对齐 Java MAX_HEADER_SIZE；超限由 Go 回 431）
+		IdleTimeout:       300 * time.Second, // 前端连接 300 秒空闲回收
 	}
 	go func(s *http.Server) {
 		if err := s.Serve(ln); err != nil && err != http.ErrServerClosed && atomic.LoadInt32(&shuttingDown) == 0 {
@@ -110,8 +111,9 @@ func engineStart(c engineCfg) (string, error) {
 					GetConfigForClient: getConfigForClient,
 					MinVersion:         tls.VersionTLS12,
 				},
-				MaxHeaderBytes: 65536,
-				IdleTimeout:    300 * time.Second,
+				ReadHeaderTimeout: 10 * time.Second,
+				MaxHeaderBytes:    65536,
+				IdleTimeout:       300 * time.Second,
 			}
 			go func(s *http.Server, ln net.Listener) {
 				// 证书由 GetConfigForClient 按 SNI 逐个提供，Server 自身无需 Certificates
@@ -373,6 +375,19 @@ func routeMatch(host, path string) *Site {
 // 仅用于「识别访客」；回源追加的 XFF 链另取直连对端 peerIp。
 func resolveClientIp(r *http.Request, peerIp string) string {
 	if r == nil || !core.TrustForwardedFromPolicy(peerIp, realIPPolicy) {
+		return peerIp
+	}
+	if ip := core.ClientIPFromHeaders(r.Header); ip != "" {
+		return ip
+	}
+	return peerIp
+}
+
+// resolveGuardIP 访问控制（IP 白名单）使用的来源 IP：仅在「显式信任」时采信转发头。
+// auto 策略下环回/私网对端默认被视为可信代理，那只适合日志取真；若用于放行判断，
+// 内网/本机直连者自带 X-Forwarded-For 就能冒充白名单地址（已实测 403 变 200）。
+func resolveGuardIP(r *http.Request, peerIp string) string {
+	if r == nil || !core.TrustForwardedFromExplicit(peerIp, realIPPolicy) {
 		return peerIp
 	}
 	if ip := core.ClientIPFromHeaders(r.Header); ip != "" {

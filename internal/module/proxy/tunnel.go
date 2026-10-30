@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"NexHomeGo/internal/core"
 )
 
 // WebSocket / Upgrade 隧道：原始字节回源（仅 HTTP/1.1 且回源 http1）。
@@ -105,7 +107,11 @@ func serializeTunnelHead(r *http.Request, upath, peerIp string, https bool, site
 		sb.WriteString("\r\n")
 	}
 	for name, vals := range r.Header {
-		if hopNoTunnel(name) || strings.EqualFold(name, "Host") {
+		// 来源头不让客户端自报：上游若按 X-Real-IP / Forwarded 单值取用，伪造一个头即可冒充任意来源。
+		if hopNoTunnel(name) || strings.EqualFold(name, "Host") ||
+			strings.EqualFold(name, "X-Real-IP") || strings.EqualFold(name, "Forwarded") ||
+			strings.EqualFold(name, "CF-Connecting-IP") ||
+			strings.EqualFold(name, core.AliyunEsaRealClientIPHeader) {
 			continue
 		}
 		for _, v := range vals {
@@ -120,12 +126,14 @@ func serializeTunnelHead(r *http.Request, upath, peerIp string, https bool, site
 	} else {
 		sb.WriteString("X-Forwarded-Proto: http-tunnel\r\n")
 	}
-	xff := r.Header.Get("X-Forwarded-For")
-	if strings.TrimSpace(xff) == "" {
-		sb.WriteString("X-Forwarded-For: " + peerIp + "\r\n")
+	// 来源头同样只信「显式可信代理」，否则丢弃客户端链（同消息级中继逻辑）。
+	guardIp := resolveGuardIP(r, peerIp)
+	if core.TrustForwardedFromExplicit(peerIp, realIPPolicy) && strings.TrimSpace(r.Header.Get("X-Forwarded-For")) != "" {
+		sb.WriteString("X-Forwarded-For: " + r.Header.Get("X-Forwarded-For") + "\r\n")
 	} else {
-		sb.WriteString("X-Forwarded-For: " + xff + ", " + peerIp + "\r\n")
+		sb.WriteString("X-Forwarded-For: " + peerIp + "\r\n")
 	}
+	sb.WriteString("X-Real-IP: " + guardIp + "\r\n")
 	sb.WriteString("X-Forwarded-By: NexHome\r\n")
 	applyTunnelOps(&sb, site.Adv.ReqHeaders)
 	sb.WriteString("Connection: upgrade\r\n\r\n")

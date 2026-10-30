@@ -97,14 +97,14 @@ function dockerToolbar(ov) {
 
 /** 容器行内操作按钮：运行中提供「停止/重启/日志」，停止态提供「启动/日志」 */
 function dockerActions(c) {
-    const id = esc(c.id);
+    const id = jsq(c.id);
     if (c.state === 'running') {
-        return `<button class="btn small danger" onclick="dockerAction('${id}','stop')">停止</button>`
-            + `<button class="btn small" onclick="dockerAction('${id}','restart')">重启</button>`
-            + `<button class="btn small" onclick="dockerLogs('${id}')">日志</button>`;
+        return `<button class="btn small danger" onclick="dockerAction(${id},'stop')">停止</button>`
+            + `<button class="btn small" onclick="dockerAction(${id},'restart')">重启</button>`
+            + `<button class="btn small" onclick="dockerLogs(${id})">日志</button>`;
     }
-    return `<button class="btn small success" onclick="dockerAction('${id}','start')">启动</button>`
-        + `<button class="btn small" onclick="dockerLogs('${id}')">日志</button>`;
+    return `<button class="btn small success" onclick="dockerAction(${id},'start')">启动</button>`
+        + `<button class="btn small" onclick="dockerLogs(${id})">日志</button>`;
 }
 
 /** 容器起停/重启：宿主特权操作，二次确认后执行 */
@@ -134,7 +134,7 @@ window.dockerLogs = async (id, tail = 200) => {
       <div class="toolbar" style="margin-bottom:8px">
         <span class="muted small">仅展示最近日志，加载过多可能影响性能</span>
         <div class="spacer"></div>
-        ${[100, 200, 500, 1000, 2000].map(n => `<button class="btn small ${n === r.tail ? 'primary' : ''}" onclick="dockerLogs('${esc(id)}',${n})">${n}</button>`).join('')}
+        ${[100, 200, 500, 1000, 2000].map(n => `<button class="btn small ${n === r.tail ? 'primary' : ''}" onclick="dockerLogs(${jsq(id)},${n})">${n}</button>`).join('')}
       </div>${body}`, 'wide');
 };
 
@@ -286,7 +286,7 @@ function dockerContainersRowsHtml() {
             : '<span class="muted">-</span>'}</td>
         <td><div style="display:flex;gap:5px;flex-wrap:wrap">
           ${dockerActions(c)}
-          <button class="btn small" onclick="dockerDetail('${esc(c.id)}')">详情</button>
+          <button class="btn small" onclick="dockerDetail(${jsq(c.id)})">详情</button>
         </div></td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="muted">暂无容器</td></tr>';
@@ -382,8 +382,8 @@ function dockerComposeRowsHtml(projects) {
         <td>${(p.services || []).map(s => badge(esc(s), 'gray')).join(' ')}</td>
         <td style="width:60px">${p.images.length}</td>
         <td style="width:170px"><div style="display:flex;gap:6px;flex-wrap:wrap">
-          <button class="btn small" onclick="dockerProjectDetail('${esc(p.name)}')">查看容器</button>
-          <button class="btn small" onclick="dockerComposeFile('${esc(p.name)}')">查看编排</button>
+          <button class="btn small" onclick="dockerProjectDetail(${jsq(p.name)})">查看容器</button>
+          <button class="btn small" onclick="dockerComposeFile(${jsq(p.name)})">查看编排</button>
         </div></td>
       </tr>`).join('') || '<tr><td colspan="7" class="muted">未发现 Compose 项目（仅统计携带 compose 标签的容器）</td></tr>';
 }
@@ -423,7 +423,7 @@ window.dockerProjectDetail = async name => {
         <td class="small">${esc(c.status)}</td>
         <td style="word-break:break-all">${esc(c.image)}</td>
         <td class="docker-mono">${esc(c.ip || '-')}</td>
-        <td><button class="btn small" onclick="dockerDetail('${esc(c.id)}')">详情</button></td>
+        <td><button class="btn small" onclick="dockerDetail(${jsq(c.id)})">详情</button></td>
       </tr>`).join('');
     modal(`Compose 项目 · ${name}`, `
       <table>

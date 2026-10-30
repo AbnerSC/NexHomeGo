@@ -139,6 +139,21 @@ func TrustForwardedFromPolicy(peer, policy string) bool {
 	return IsTrustedProxyPeer(peer)
 }
 
+// TrustForwardedFromExplicit 访问控制专用的转发头信任判定：
+// 仅策略为 always，或直连对端命中显式配置的可信网段（security.trustedProxies）时才采信。
+// 与 TrustForwardedFromPolicy 的区别是不再把「环回/私网」默认当成可信代理——
+// 面板/代理端口一旦被内网或本机直连，任何人都能自带 X-Forwarded-For 冒充白名单地址
+// （实测：ipAllow=[1.2.3.4] 直连 403，加一个伪造 XFF 即 200）。日志取真可继续用宽松策略。
+func TrustForwardedFromExplicit(peer, policy string) bool {
+	switch policy {
+	case TrustProxyAlways:
+		return true
+	case TrustProxyNever:
+		return false
+	}
+	return MatchTrustedProxy(peer)
+}
+
 // ClientIPFromHeaders 按优先级从请求头解析真实客户端 IP：
 // aliyun-esa-real-client-ip（ESA 注入，多值取最后一个合法项）→ X-Forwarded-For（链尾）→ X-Real-IP → CF-Connecting-IP。
 // 全部缺失/非法返回空串，由调用方决定是否回退到 TCP 对端地址。

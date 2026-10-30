@@ -160,7 +160,7 @@ async function renderHome() {
                 ? `<img src="${esc(iconSrc(t.it.icon_url))}" onerror="this.replaceWith(document.createTextNode('🌍'))">`
                 : '🌍';
             html += `
-            <div class="nav-tile" style="--tile-accent:${accent};--i:${i}" title="${esc(t.tip)}" onclick="window.open('${esc(t.url)}','_blank')">
+            <div class="nav-tile" style="--tile-accent:${accent};--i:${i}" title="${esc(t.tip)}" onclick="window.open(${jsq(t.url)},'_blank')">
               <div class="tile-actions">
                 <button class="btn small" onclick="event.stopPropagation();navForm(${t.it.id})">编辑</button>
                 <button class="btn small danger" onclick="event.stopPropagation();navDelete(${t.it.id})">删除</button>
@@ -320,13 +320,13 @@ window.navImageManage = async (onPick) => {
     const imgs = data.images || [];
     const cells = imgs.map(im => `
       <div class="img-cell">
-        <img class="img-thumb" src="${esc(iconSrc(im.url))}" title="点击预览" onclick="navImagePreview('${esc(im.url)}')">
+        <img class="img-thumb" src="${esc(iconSrc(im.url))}" title="点击预览" onclick="navImagePreview(${jsq(im.url)})">
         <div class="img-path small muted" title="${esc(im.url)}">${esc(im.url)}</div>
         <div class="small muted">${fmtImgSize(im.size)}${im.refs && im.refs.length ? ' · 被引用：' + esc(im.refs.join('、')) : ''}</div>
         <div class="img-ops">
-          ${imgPickCb ? `<button class="btn small primary" onclick="navImagePick('${esc(im.url)}')">选用</button>` : ''}
-          <button class="btn small" onclick="copyText('${esc(im.url)}')">复制路径</button>
-          <button class="btn small danger" onclick="navImageDelete('${esc(im.url)}')">删除</button>
+          ${imgPickCb ? `<button class="btn small primary" onclick="navImagePick(${jsq(im.url)})">选用</button>` : ''}
+          <button class="btn small" onclick="copyText(${jsq(im.url)})">复制路径</button>
+          <button class="btn small danger" onclick="navImageDelete(${jsq(im.url)})">删除</button>
         </div>
       </div>`).join('');
     modal('图片管理', `
@@ -368,7 +368,7 @@ window.navImagePreview = url => {
     modal('图片预览', `
       <div class="img-preview-wrap"><img src="${esc(iconSrc(url))}" alt=""></div>
       <div class="form-foot full" style="margin-top:10px">
-        <button type="button" class="btn" onclick="copyText('${esc(url)}')">复制路径</button>
+        <button type="button" class="btn" onclick="copyText(${jsq(url)})">复制路径</button>
         <button type="button" class="btn" onclick="closeModal()">关闭</button>
       </div>`);
 };

@@ -171,6 +171,22 @@ func TestServeStaticBasic(t *testing.T) {
 	}
 }
 
+// TestServeStaticRootSymlinkRejected 站点根目录为符号链接时必须拒绝：
+// realPath(root) 会随软链漂移（root -> / 时基准变成整个根分区），
+// 站点目录内的任意文件都能被读出（实测 /etc/passwd 返回 200）。
+func TestServeStaticRootSymlinkRejected(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "ok.txt", "ok")
+	link := filepath.Join(t.TempDir(), "rootlink")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("当前环境不支持创建符号链接: %v", err)
+	}
+	site := newStaticSite(t, link, nil) // staticRootDir 只做 Clean，软链可入库
+	if w := doStatic(site, "GET", "/ok.txt", ""); w.Code != 403 {
+		t.Fatalf("软链站点根应被拒绝（403），实际 code=%d body=%q", w.Code, w.Body.String())
+	}
+}
+
 // TestServeStaticSPAFallback SPA 回退只对页面请求生效，资源请求仍 404。
 func TestServeStaticSPAFallback(t *testing.T) {
 	dir := t.TempDir()

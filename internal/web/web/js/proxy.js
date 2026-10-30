@@ -153,7 +153,7 @@ async function refreshProxyRows(preferedStatus) {
           <td><label class="switch"><input type="checkbox" ${s.enabled === 1 ? 'checked' : ''} onchange="pxToggle(${s.id}, this.checked)"><span class="slider"></span></label></td>
           <td>
             <button class="btn small" title="编辑" onclick="pxForm(${s.id})">✎</button>
-            <button class="btn small danger" title="删除" onclick="pxDelete(${s.id}, '${esc(s.name)}')">🗑</button>
+            <button class="btn small danger" title="删除" onclick="pxDelete(${s.id}, ${jsq(s.name)})">🗑</button>
           </td>
         </tr>`;
     }).join('') || '<tr><td colspan="7" class="muted">暂无代理站点，点击右上角「新增站点」添加。</td></tr>';

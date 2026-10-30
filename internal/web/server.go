@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	pathpkg "path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -217,6 +218,23 @@ func apiBodyLimit(p string) int64 {
 	return maxAPIBodyBytes
 }
 
+// canonicalPath 判断请求路径是否已规范化：拒绝重复斜杠、点段与非规范尾斜杠。
+// 合法形态只有 path.Clean(p) == p，或仅多一个目录尾斜杠（如 /entry/）。
+func canonicalPath(p string) bool {
+	if p == "" || p[0] != '/' {
+		return false
+	}
+	if p == "/" {
+		return true
+	}
+	clean := pathpkg.Clean(p)
+	if clean == p {
+		return true
+	}
+	// 仅放行“目录路径尾巴多一个斜杠”（/entry/、/docs/）；根的 "//" 仍算非规范。
+	return clean != "/" && clean+"/" == p
+}
+
 // setSecurityHeaders 统一安全响应头：阻止 MIME 嗅探、点击劫持与 Referer 泄漏 token。
 func setSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
@@ -368,6 +386,15 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	// 安全响应头对所有面板响应（静态/接口/错误页）统一生效。
 	setSecurityHeaders(w)
+	if r.TLS != nil {
+		w.Header().Set("Strict-Transport-Security", "max-age=15552000")
+	}
+	// 非规范路径一律拒绝：鉴权用 strings.HasPrefix(innerPath, "/api/")，路由匹配却按 Trim(path, "/")
+	// 拆分，"//api/**"、"/entry/%2fapi/**" 这类路径会让两者结论不一致，从而绕过登录校验。
+	if !canonicalPath(path) {
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
 	entryOn := currentCfg != nil && currentCfg.Entry != ""
 	prefix := ""
 	if entryOn {
@@ -496,8 +523,9 @@ func mapError(c *Ctx, err error) {
 			c.Fail(se.Code, se.Msg)
 			return
 		}
+		// 内部错误细节只进日志：响应体回显底层错误会泄露路径、SQL 与依赖版本等信息。
 		core.LogError(core.LogSys, "接口异常 "+c.Method()+" "+c.Path()+": "+err.Error())
-		c.Fail(http.StatusInternalServerError, "操作失败: "+err.Error())
+		c.Fail(http.StatusInternalServerError, "操作失败，请查看系统日志")
 	}
 }
 

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"NexHomeGo/internal/core"
 )
 
 // 请求处理链：与 Java ProxyHandler.startRequest 逐分支对齐（顺序与文案一致）；
@@ -20,6 +22,8 @@ import (
 // serveRequest 单请求入口（https 标记由监听口决定，等价 Java IS_HTTPS 属性）
 func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 	isH2 := r.ProtoMajor == 2
+	// 慢速请求体防护：ReadHeaderTimeout 只覆盖头部，半截 body 可长期占住连接（实测 40s 未断）。
+	setBodyReadDeadline(w, r)
 	hostHdr := r.Host
 	if hostHdr == "" {
 		hostHdr = r.Header.Get("Host")
@@ -66,8 +70,11 @@ func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 	statsRecord(host, clientIp) // 访问统计：路由命中即计一次（含被访问控制拒绝的请求）
 
 	// 访问控制链：IP 白名单 -> BasicAuth -> 限流 -> 请求体上限
-	if len(adv.IPAllow) > 0 && !ipAllowed(clientIp, adv.IPAllow) {
-		sendSimple(w, 403, "来源 IP 不在白名单内: "+clientIp, "", "", true)
+	// 白名单必须按「显式可信代理」解析来源 IP：auto 策略把环回/私网对端默认为可信代理，
+	// 内网或本机直连者自带 X-Forwarded-For 即可冒充白名单地址（已实测 403 变 200）。
+	guardIp := resolveGuardIP(r, peerIp)
+	if len(adv.IPAllow) > 0 && !ipAllowed(guardIp, adv.IPAllow) {
+		sendSimple(w, 403, "来源 IP 不在白名单内: "+guardIp, "", "", true)
 		return
 	}
 	if adv.AuthUser != "" && !checkBasicAuth(r, adv) {
@@ -129,9 +136,12 @@ func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 		return
 	}
 
-	// 文件缓存查询（GET、无 Authorization、无 Range）
+	// 文件缓存查询（GET、无 Authorization、无 Range、无 Cookie）
+	// 缓存键只含 scheme+host+uri，不含请求头；带 Cookie 的响应可能是因人而异的私有内容，
+	// 不排除会被写入共享缓存并被匿名访客命中（已实测可复现跨用户数据泄露）。
 	mayCache := adv.CacheEnabled && r.Method == http.MethodGet &&
-		r.Header.Get("Authorization") == "" && r.Header.Get("Range") == ""
+		r.Header.Get("Authorization") == "" && r.Header.Get("Range") == "" &&
+		r.Header.Get("Cookie") == ""
 	cacheKey := ""
 	if mayCache {
 		scheme := "http"
@@ -154,6 +164,23 @@ func joinQuery(query string) string {
 		return ""
 	}
 	return "?" + query
+}
+
+// setBodyReadDeadline 给请求体读取设置截止时间（HTTP/1.1 与 HTTP/2 均由 ResponseController 支持）。
+// 预算：30 秒基础 + 1 秒/MB 声明长度，上限 10 分钟；未声明长度按上限处理。
+// 不支持时静默忽略（由服务器超时兜底），不影响正常大文件上传。
+func setBodyReadDeadline(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet || r.Method == http.MethodHead {
+		return
+	}
+	budget := 30 * time.Second
+	if r.ContentLength > 0 {
+		budget += time.Duration(r.ContentLength/(1<<20)) * time.Second
+	}
+	if budget > 10*time.Minute {
+		budget = 10 * time.Minute
+	}
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(budget))
 }
 
 // beginRelay 消息级中继：改写请求头后回源，响应流式回写；满足条件时旁路 tee 写缓存
@@ -188,11 +215,21 @@ func beginRelay(w http.ResponseWriter, r *http.Request, site *Site, upath, pathQ
 	fwd.ContentLength = r.ContentLength
 	fwd.Header.Set("X-Forwarded-Proto", protoTag(https))
 	fwd.Header.Set("X-Forwarded-Host", r.Host)
-	xff := r.Header.Get("X-Forwarded-For")
-	if strings.TrimSpace(xff) == "" {
-		fwd.Header.Set("X-Forwarded-For", peerIp)
+	// 来源头一律由本代理重写：客户端自报的 X-Real-IP / Forwarded / CF-Connecting-IP 若原样透传，
+	// 上游按「单值真实 IP」取用即可冒充任意来源（绕过上游自己的 IP 白名单、污染审计日志）。
+	// 仅当对端是「显式可信代理」（security.trustedProxies 命中或策略 always）时才保留其链路，
+	// 否则丢弃客户端链——auto 下环回/私网对端无法区分本机反代与内网直连者，不能作为依据。
+	guardIp := resolveGuardIP(r, peerIp)
+	fwd.Header.Del("X-Real-IP")
+	fwd.Header.Del("Forwarded")
+	fwd.Header.Del("CF-Connecting-IP")
+	fwd.Header.Del(core.AliyunEsaRealClientIPHeader)
+	fwd.Header.Del("X-Forwarded-For")
+	fwd.Header.Set("X-Real-IP", guardIp)
+	if core.TrustForwardedFromExplicit(peerIp, realIPPolicy) && strings.TrimSpace(r.Header.Get("X-Forwarded-For")) != "" {
+		fwd.Header.Set("X-Forwarded-For", r.Header.Get("X-Forwarded-For"))
 	} else {
-		fwd.Header.Set("X-Forwarded-For", xff+", "+peerIp)
+		fwd.Header.Set("X-Forwarded-For", peerIp)
 	}
 	fwd.Header.Set("X-Forwarded-By", "NexHome")
 	applyHeaderOps(adv.ReqHeaders, fwd.Header)

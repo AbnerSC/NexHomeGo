@@ -38,6 +38,15 @@ func serveStatic(w http.ResponseWriter, r *http.Request, site *Site, urlPath, qu
 		sendErrorPage(w, 503, "站点目录不可用: "+site.RootDir, staticRootHint, true)
 		return
 	}
+	// 根目录自身或其路径中含符号链接时，realPath(root) 会随软链漂移（如 root -> /），
+	// 使下面的 staticWithin 基准变成软链目标，站点目录内的任意文件均可被读出。
+	// 要求站点根必须是真实路径（容器挂载点不是软链，不受影响）。
+	if realRoot := realPath(root); !strings.EqualFold(filepath.Clean(realRoot), filepath.Clean(root)) {
+		noteError(site, "拒绝符号链接站点根目录: "+root)
+		sendErrorPage(w, 403, "静态站点根目录不允许包含符号链接: "+root,
+			"请把站点目录改为真实路径（或去掉路径中的软链）后重试。", true)
+		return
+	}
 	rel := staticRelPath(site, urlPath)
 	full, ok := staticJoin(root, rel)
 	if !ok {

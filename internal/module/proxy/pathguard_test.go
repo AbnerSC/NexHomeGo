@@ -107,3 +107,33 @@ func TestResolveClientIp(t *testing.T) {
 		t.Fatalf("无转发头应回退对端地址，实际 %q", got)
 	}
 }
+
+// TestResolveGuardIP 访问控制（IP 白名单）来源 IP：只有显式可信代理才能提供转发头。
+// 关键回归：auto 策略下环回/内网对端不再被默认信任，否则直连者自带 XFF 即可绕过白名单。
+func TestResolveGuardIP(t *testing.T) {
+	old := realIPPolicy
+	defer func() { realIPPolicy = old }()
+
+	r := httptest.NewRequest("GET", "http://a.example/", nil)
+	r.Header.Set("X-Forwarded-For", "1.2.3.4")
+
+	realIPPolicy = core.TrustProxyAuto
+	if got := resolveGuardIP(r, "127.0.0.1"); got != "127.0.0.1" {
+		t.Fatalf("auto+环回对端不应采信 XFF，实际 %q", got)
+	}
+	if got := resolveGuardIP(r, "10.0.0.5"); got != "10.0.0.5" {
+		t.Fatalf("auto+内网对端不应采信 XFF，实际 %q", got)
+	}
+	realIPPolicy = core.TrustProxyNever
+	if got := resolveGuardIP(r, "127.0.0.1"); got != "127.0.0.1" {
+		t.Fatalf("never 策略不应采信 XFF，实际 %q", got)
+	}
+	realIPPolicy = core.TrustProxyAlways
+	if got := resolveGuardIP(r, "203.0.113.9"); got != "1.2.3.4" {
+		t.Fatalf("always 策略应采信 XFF，实际 %q", got)
+	}
+	realIPPolicy = core.TrustProxyAuto
+	if got := resolveGuardIP(httptest.NewRequest("GET", "http://a.example/", nil), "10.0.0.5"); got != "10.0.0.5" {
+		t.Fatalf("无转发头应回退对端地址，实际 %q", got)
+	}
+}

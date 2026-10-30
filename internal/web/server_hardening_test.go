@@ -1,6 +1,7 @@
 package web
 
 import (
+	"crypto/tls"
 	"net/http/httptest"
 	"testing"
 )
@@ -39,5 +40,57 @@ func TestUnboundedBodyWhitelist(t *testing.T) {
 		if unboundedBodyPath(p) {
 			t.Fatalf("%s 不应绕过请求体上限", p)
 		}
+	}
+}
+
+// TestCanonicalPath 非规范路径必须被识别：鉴权用 HasPrefix("/api/") 判定，
+// 路由匹配却按 Trim(path, "/") 拆分，"//api/**" 会在两者间产生结论差（鉴权绕过）。
+func TestCanonicalPath(t *testing.T) {
+	bad := []string{
+		"//api/dashboard",
+		"///api/dashboard",
+		"/api//dashboard",
+		"/api/./dashboard",
+		"/entry//api/dashboard",
+		"/../etc/passwd",
+		"//",
+		"",
+		"api/dashboard",
+	}
+	for _, p := range bad {
+		if canonicalPath(p) {
+			t.Fatalf("%q 应判为非规范路径", p)
+		}
+	}
+	good := []string{"/", "/api/dashboard", "/entry/", "/.well-known/acme-challenge/token", "/js/app.js"}
+	for _, p := range good {
+		if !canonicalPath(p) {
+			t.Fatalf("%q 是合法路径，不应被拒", p)
+		}
+	}
+}
+
+// TestServeHTTPRejectsMultiSlashAPI 分发层面对 "//api/**" 必须直接拒绝，
+// 不能交给后续鉴权/路由（否则会以未登录身份命中接口）。
+func TestServeHTTPRejectsMultiSlashAPI(t *testing.T) {
+	for _, p := range []string{"//api/dashboard", "///api/system/backup", "/api/./dashboard"} {
+		r := httptest.NewRequest("GET", "/api/dashboard", nil)
+		r.URL.Path = p
+		rec := httptest.NewRecorder()
+		serveHTTP(rec, r)
+		if rec.Code != 400 && rec.Code != 404 {
+			t.Fatalf("%q 应被拒绝，实际 code=%d body=%q", p, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+// TestServeHTTPSHSTS HTTPS 访问必须下发 HSTS，防止后续请求降级到明文。
+func TestServeHTTPSHSTS(t *testing.T) {
+	r := httptest.NewRequest("GET", "/", nil)
+	r.TLS = &tls.ConnectionState{}
+	rec := httptest.NewRecorder()
+	serveHTTP(rec, r)
+	if rec.Header().Get("Strict-Transport-Security") == "" {
+		t.Fatal("HTTPS 响应缺少 Strict-Transport-Security")
 	}
 }
