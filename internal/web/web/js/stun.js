@@ -779,12 +779,17 @@ function tfRenderChart(host, name, points, theme, tickFmt, tipFmt) {
         grid += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${g ? 'rgba(148,163,200,.10)' : 'rgba(148,163,200,.24)'}" stroke-dasharray="${g ? '3 4' : ''}"/>`
             + `<text x="${P.l - 7}" y="${+y + 3.5}" text-anchor="end" font-size="9.5" fill="#aab6d8">${fmtTrafficBytes((nice * g) / 4)}</text>`;
     }
-    // 横轴刻度（最多 ~6 个，末尾必显）
+    // 横轴刻度：按标签实际宽度自动疏密（宽度够则全部显示），末尾必显且不与相邻刻度重叠
+    const labels = pts.map(p => String(tickFmt(p.key)));
+    const tickW = s => Array.from(s).reduce((w, ch) => w + (/[^\x00-\xff]/.test(ch) ? 9.6 : 5.4), 0) + 8;
+    const maxTicks = Math.max(2, Math.min(pts.length, Math.floor(iw / Math.max(...labels.map(tickW), 1))));
+    const step = Math.max(1, Math.ceil(pts.length / maxTicks));
     let ticks = '';
-    const step = Math.max(1, Math.ceil(pts.length / 5));
     pts.forEach((p, i) => {
-        if (i % step && i !== pts.length - 1) return;
-        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#aab6d8">${esc(tickFmt(p.key))}</text>`;
+        const isLast = i === pts.length - 1;
+        // 非末位需落在步长上；末位前一个刻度离末位过近时让位，避免文字重叠
+        if (!isLast && (i % step || pts.length - 1 - i < step)) return;
+        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#aab6d8">${esc(labels[i])}</text>`;
     });
 
     const last = pts[pts.length - 1];
@@ -851,7 +856,8 @@ window.stunTraffic = async id => {
             return tfDateKey(t);
         });
         const months = tfFillWindow(d.months, 12, i => {
-            const t = new Date(now); t.setMonth(t.getMonth() - i);
+            // 以“月初”构造：直接用 now 的日号 setMonth，31 号在小月会溢出到下月，导致月份键重复
+            const t = new Date(now.getFullYear(), now.getMonth() - i, 1);
             return `${t.getFullYear()}-${tfPad(t.getMonth() + 1)}`;
         });
         const data = { hour: hours, day: days, month: months };
@@ -871,6 +877,6 @@ window.stunTraffic = async id => {
         tfRenderChart($('#tf-chart-day'), 'day', days, TF_THEMES.day,
             k => k.slice(5), k => k);
         tfRenderChart($('#tf-chart-month'), 'month', months, TF_THEMES.month,
-            k => k.slice(5) + '月', k => k.replace('-', '年') + '月');
+            k => k.replace('-', '/'), k => k.replace('-', '年') + '月');
     } catch (e) { toast(e.message, 'err'); }
 };
