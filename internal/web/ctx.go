@@ -17,6 +17,9 @@ type Ctx struct {
 	r        *http.Request
 	params   map[string]string
 	wroteHdr bool
+	bodyRead bool   // 请求体是否已读取（同一请求只读一次，见 BodyText）
+	bodyText string // 已读取的请求体原文
+	bodyErr  error  // 读取请求体的错误（超过上限时为 *http.MaxBytesError，由 mapError 映射为 413）
 }
 
 // Handler 业务路由处理器：返回 error 交由服务器统一映射为 {ok:false,error} 响应。
@@ -77,12 +80,25 @@ func (c *Ctx) ClientIP() string {
 }
 
 // BodyText 读取请求体文本。
+// 请求体是单向流，只读一次后即耗尽：必须缓存，否则同一处理内「先 Body() 解析字段，
+// 再 BodyText() 原样取原文」（如通知渠道要把 config 原样入库）第二次会拿到空串，
+// 表现为配置保存后变成 {}。需要流式读取的接口（上传/测速）直接取 Request().Body，不走本方法。
 func (c *Ctx) BodyText() string {
+	if c.bodyRead {
+		return c.bodyText
+	}
+	c.bodyRead = true
 	if c.r.Body == nil {
 		return ""
 	}
-	b, _ := io.ReadAll(c.r.Body)
-	return string(b)
+	b, err := io.ReadAll(c.r.Body)
+	if err != nil {
+		// 超过上限时正文被截断（chunked 请求没有 Content-Length，前置的 413 判断拦不住）：
+		// 记下错误交给 mapError 回 413，否则半截 JSON 只会报出「xx 不能为空」这类误导性 400。
+		c.bodyErr = err
+	}
+	c.bodyText = string(b)
+	return c.bodyText
 }
 
 // Body 请求体解析为对象（等价 ctx.body()）。

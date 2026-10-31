@@ -32,8 +32,24 @@ const (
 	defaultLockMinutes = 30
 
 	// MinAccessTokenLen / MaxAccessTokenLen 接口访问令牌长度区间（上限与设置页输入框一致）。
-	MinAccessTokenLen = 8
+	// 下限取 32：接口令牌权限等同已登录用户（可下载证书私钥、导出配置备份），
+	// 且其校验入口 /api/auth/check 免登录，过短令牌可被在线爆破（8 位仅 48bit 以下空间）。
+	MinAccessTokenLen = 32
 	MaxAccessTokenLen = 64
+
+	// AccessTokenMaxFails / AccessTokenLockMinutes 接口令牌校验失败的锁定阈值（细分桶）：
+	// /api/auth/check 是免鉴权的令牌探测入口，必须限速，否则短令牌仍可在线枚举。
+	AccessTokenMaxFails    = 10
+	AccessTokenLockMinutes = 15
+	// AccessTokenPeerMaxFails 绝对桶（TCP 对端）失败上限：为细分桶的 6 倍。
+	// 面板挂在反向代理 / ESA 回源之后时，全部客户端共享同一对端地址；若沿用细分阈值，
+	// 任何一个外部人员错输 10 次就能把该代理下的合法调用一起锁死 15 分钟。
+	// 抬高阈值后仍保留「伪造转发头绕不过 TCP 对端硬上限」的防爆破作用。
+	AccessTokenPeerMaxFails = AccessTokenMaxFails * 6
+	// maxTrackedAccessIPs 每个计数桶的容量上限：防止海量来源把计数表本身变成内存放大面
+	maxTrackedAccessIPs = 4096
+	// accessFailIdleMs 接口令牌计数条目空闲回收阈值：超过该时长未再失败的未锁定条目直接回收
+	accessFailIdleMs = 10 * 60 * 1000
 )
 
 // NotifyBroadcast 由通知中心在启动时注入：锁定事件扇出（解耦，auth 不直接依赖 notify 包）。
@@ -45,11 +61,21 @@ var (
 
 	failsMu sync.Mutex
 	fails   = map[string]*failState{} // ip -> 失败/锁定状态
+
+	// 接口令牌校验失败计数（双桶）与登录失败计数分开：
+	//   - atPeerFails：绝对桶，键为 TCP 对端地址（不可伪造），任何来源的失败硬上限；
+	//   - atClientFails：细分桶，键为「对端|真实客户端」，仅在直连对端是显式可信代理时使用，
+	//     避免代理后一人爆破误锁全员；非代理场景为空，不影响判定。
+	atFailsMu     sync.Mutex
+	atPeerFails   = map[string]*failState{} // peer -> 绝对桶
+	atClientFails = map[string]*failState{} // peer|client -> 细分桶
 )
 
 type failState struct {
 	count       int
 	lockUntilMs int64
+	// lastMs 最近一次失败时刻（ms）：接口令牌计数表按空闲时长回收条目的依据
+	lastMs int64
 }
 
 // Init 初始化随机密码（仅首次启动），明文只打印控制台，不落日志表。
@@ -207,7 +233,7 @@ func GetAccessToken() (string, error) {
 	return core.GetConfig(KeyAccessToken)
 }
 
-// SetAccessToken 保存接口访问令牌：留空表示停用，非空需 8~64 位字母/数字/中划线/下划线。
+// SetAccessToken 保存接口访问令牌：留空表示停用，非空需 MinAccessTokenLen~MaxAccessTokenLen 位字母/数字/中划线/下划线。
 // 令牌以明文保存（调用方需复制使用），不参与会话单点登录。
 func SetAccessToken(token string) error {
 	token = strings.TrimSpace(token)
@@ -238,6 +264,125 @@ func CheckAccessToken(token string) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(token), []byte(want)) == 1
+}
+
+// AccessTokenLockRemainingMs 该来源因接口令牌校验失败被锁定的剩余毫秒数，0 表示未锁定。
+// peer 必填（TCP 对端地址）；clientKey 为空表示本次不参与细分计数（对端不是显式可信代理），
+// 不为空时取两桶剩余锁定时间的较大值（细分桶可能先于绝对桶触发）。
+func AccessTokenLockRemainingMs(peer, clientKey string) int64 {
+	now := time.Now().UnixMilli()
+	atFailsMu.Lock()
+	defer atFailsMu.Unlock()
+	a := remainingLocked(atPeerFails[peer], now)
+	b := remainingLocked(atClientFails[clientBucketKey(peer, clientKey)], now)
+	if b > a {
+		return b
+	}
+	return a
+}
+
+// RecordAccessTokenFailure 记录一次接口令牌校验失败：
+//   - 细分桶（clientKey 非空）连续失败 AccessTokenMaxFails 次后锁定该客户端；
+//   - 绝对桶（TCP 对端）连续失败 AccessTokenPeerMaxFails 次后锁定该来源。
+//
+// 双桶的意义：代理后所有客户端共享同一 TCP 对端，细分桶让爆破只影响发起者自己；
+// 而转发头可伪造，一旦细分键被逐次更换，绝对桶仍提供不可绕过的失败上限。
+// 调用方应在校验前先用 AccessTokenLockRemainingMs 拦截锁定态。
+func RecordAccessTokenFailure(peer, clientKey string) {
+	now := time.Now().UnixMilli()
+	atFailsMu.Lock()
+	peerLocked := bumpAccessFailLocked(atPeerFails, peer, now, AccessTokenPeerMaxFails)
+	clientLocked := bumpAccessFailLocked(atClientFails, clientBucketKey(peer, clientKey), now, AccessTokenMaxFails)
+	atFailsMu.Unlock()
+
+	switch {
+	case clientLocked:
+		reportAccessTokenLockout("客户端 "+peer+"|"+clientKey, AccessTokenMaxFails)
+	case peerLocked:
+		reportAccessTokenLockout("来源 IP "+peer, AccessTokenPeerMaxFails)
+	}
+}
+
+// ResetAccessTokenFailures 校验成功：清除该来源的两个失败计数桶。
+func ResetAccessTokenFailures(peer, clientKey string) {
+	atFailsMu.Lock()
+	delete(atPeerFails, peer)
+	delete(atClientFails, clientBucketKey(peer, clientKey))
+	atFailsMu.Unlock()
+}
+
+// clientBucketKey 细分桶键：对端地址 + 真实客户端地址；客户端未知或与对端相同时不细分（返回空）。
+func clientBucketKey(peer, clientKey string) string {
+	clientKey = strings.TrimSpace(clientKey)
+	if clientKey == "" || clientKey == peer {
+		return ""
+	}
+	return peer + "|" + clientKey
+}
+
+// remainingLocked 该失败状态下尚未结束的锁定毫秒数（st 为空或未锁定返回 0）
+func remainingLocked(st *failState, now int64) int64 {
+	if st == nil {
+		return 0
+	}
+	if remain := st.lockUntilMs - now; remain > 0 {
+		return remain
+	}
+	return 0
+}
+
+// bumpAccessFailLocked 累加一次失败并在达到阈值时进入锁定态，返回是否本次刚触发锁定。
+// 锁定期间不再累加；计数表满时先回收空闲条目，仍满则不计数（优先保证内存安全）。
+func bumpAccessFailLocked(bucket map[string]*failState, key string, now int64, maxFails int) bool {
+	if key == "" {
+		return false
+	}
+	st := bucket[key]
+	if st == nil {
+		if len(bucket) >= maxTrackedAccessIPs {
+			purgeAccessFailsLocked(bucket, now)
+			if len(bucket) >= maxTrackedAccessIPs {
+				return false
+			}
+		}
+		st = &failState{}
+		bucket[key] = st
+	}
+	if st.lockUntilMs > now {
+		return false // 已锁定不重复计数
+	}
+	st.count++
+	st.lastMs = now
+	if st.count < maxFails {
+		return false
+	}
+	st.count = 0
+	st.lockUntilMs = now + int64(AccessTokenLockMinutes)*60_000
+	return true
+}
+
+// reportAccessTokenLockout 锁定告警：写日志并扇出通知（与登录锁定同事件类型）
+func reportAccessTokenLockout(who string, maxFails int) {
+	core.LogWarn(core.LogAuth, who+" 接口令牌连续校验失败 "+itoa(maxFails)+
+		" 次，已锁定 "+itoa(AccessTokenLockMinutes)+" 分钟")
+	if NotifyBroadcast != nil {
+		NotifyBroadcast("auth.lockout", "接口令牌爆破锁定",
+			who+" 连续接口令牌校验失败 "+itoa(maxFails)+" 次，已锁定 "+
+				itoa(AccessTokenLockMinutes)+" 分钟。")
+	}
+}
+
+// purgeAccessFailsLocked 回收计数桶条目（调用方持 atFailsMu）：锁定中的条目保留，
+// 其余「计数已清零」或「空闲超过 accessFailIdleMs」的条目一律删除。
+func purgeAccessFailsLocked(bucket map[string]*failState, now int64) {
+	for k, st := range bucket {
+		if st.lockUntilMs > now {
+			continue // 锁定中：保留至解锁
+		}
+		if st.count == 0 || now-st.lastMs > accessFailIdleMs {
+			delete(bucket, k)
+		}
+	}
 }
 
 // SetSecurity 设置登录安全参数。

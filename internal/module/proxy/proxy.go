@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -474,8 +475,8 @@ func validate(b map[string]interface{}) (*values, error) {
 		// 静态站点：target 为站点目录，留空则用默认目录 data/html/{id}（保存时自动创建）；
 		// 手填目录仍要求确实存在（目录打错/未挂载当场暴露）。
 		if target != "" {
-			if _, err := staticRootDir(target, true); err != nil {
-				return nil, core.NewBadRequest("%s", err.Error())
+			if _, err := staticRootDir(target, true); err != nil { // 已是 *core.BadRequest，无需重包
+				return nil, err
 			}
 		}
 	} else if err := validateTarget(target); err != nil {
@@ -546,7 +547,14 @@ func stageStatic(id int64, v *values) error {
 	}
 	dir, err := resolveStaticSiteDir(id, v.target)
 	if err != nil {
-		return core.NewBadRequest("%s", err.Error())
+		// 目录格式/不存在/占用数据目录等校验错误（*core.BadRequest）回 400 给用户看；
+		// 创建默认目录失败（磁盘满、只读挂载、权限不足）属系统故障，原样上抛走 500 兜底：
+		// 否则 os 原始错误（含部署绝对路径）会以参数错误的形式回显到前端。
+		var br *core.BadRequest
+		if errors.As(err, &br) {
+			return br
+		}
+		return err
 	}
 	v.target = dir
 	if v.uploadToken == "" {

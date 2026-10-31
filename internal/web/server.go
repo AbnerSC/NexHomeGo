@@ -256,6 +256,9 @@ func canonicalPath(p string) bool {
 // CSP 说明：前端为原生 JS，页面内以 innerHTML  + onclick 形式渲染列表操作按钮，
 // 必须保留 'unsafe-inline'（否则整站按钮失效），但 default-src 'self' 仍能拦住
 // 外部域脚本引用（<script src=//evil>）与 object/base 注入；frame-ancestors 与 XFO 双保险。
+// worker-src 必须显式放行 blob:：首页网络测速用 blob: URL 创建读流 Worker 并行统计下载字节，
+// 未声明 worker-src 时会回退到 script-src，而 script-src 不含 blob:，Worker 全部被拦，
+// 测速虽能回退到主线程但数值明显偏低且页面卡顿（浏览器控制台报 “violates ... script-src”）。
 func setSecurityHeaders(w http.ResponseWriter) {
 	h := w.Header()
 	h.Set("X-Content-Type-Options", "nosniff")
@@ -265,7 +268,7 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	h.Set("Content-Security-Policy",
 		"default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data: blob: https: http:; font-src 'self' data:; connect-src 'self' https: http:; "+
-			"object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+			"worker-src 'self' blob:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 }
 
 // launch 构建并启动一个 Web 实例（HTTP 监听器 + 可选 HTTPS 监听器），绑定失败返回错误。
@@ -509,6 +512,8 @@ func serveHTTP(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("请求体过大（上限 %s）", fmtLimit(limit)))
 			return
 		}
+		// 无 Content-Length（chunked）的请求无法前置判断，超限在读取时暴露：
+		// 由 Ctx.BodyText 记录错误，mapError 统一改报 413。
 		r.Body = http.MaxBytesReader(w, r.Body, limit)
 	}
 
@@ -544,6 +549,14 @@ func runHandler(w http.ResponseWriter, r *http.Request, h Handler, params map[st
 // mapError 等价 Java 统一异常映射：BadRequest→400，StatusError→code，其他→500。
 func mapError(c *Ctx, err error) {
 	if c.wroteHdr {
+		return
+	}
+	// 请求体在读取时超过上限而被打断：由此产生的字段缺失/解析失败都是假象，
+	// 统一按 413 上报真实原因，避免误导用户去改表单内容。
+	var mbe *http.MaxBytesError
+	if errors.As(c.bodyErr, &mbe) {
+		core.LogWarn(core.LogSys, "请求体超限 "+c.Method()+" "+c.Path()+": "+mbe.Error())
+		c.Fail(http.StatusRequestEntityTooLarge, fmt.Sprintf("请求体过大（上限 %s）", fmtLimit(mbe.Limit)))
 		return
 	}
 	var br *core.BadRequest

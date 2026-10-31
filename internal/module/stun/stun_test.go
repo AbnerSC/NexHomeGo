@@ -2,6 +2,7 @@ package stun
 
 import (
 	"encoding/json"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -480,5 +481,50 @@ func TestParseEsaPickedBigID(t *testing.T) {
 	picked := parseEsaPicked(`[{"id":9123456789012345678,"name":"a.edge.test"}]`)
 	if len(picked) != 1 || picked[0].id != 9123456789012345678 || picked[0].name != "a.edge.test" {
 		t.Errorf("解析错误: %+v", picked)
+	}
+}
+
+// ==================== UDP 转发会话护栏 ====================
+
+// TestRelayLimiter 源 IP 新建会话限速：突发配额内放行，超限拒绝，令牌按时间补充，
+// 其它源 IP 互不影响；限速表满时拒绝新源（已记录的源保持服务）。
+func TestRelayLimiter(t *testing.T) {
+	l := newRelayLimiter()
+	now := time.Now()
+	const victim, other = "198.51.100.7", "198.51.100.8"
+
+	allowed := 0
+	for i := 0; i < int(relayRateBurst)+10; i++ {
+		if l.allow(victim, now) {
+			allowed++
+		}
+	}
+	if allowed != int(relayRateBurst) {
+		t.Fatalf("突发配额应放行 %d 次，got %d", int(relayRateBurst), allowed)
+	}
+	if l.allow(victim, now) {
+		t.Fatal("突发配额耗尽后应拒绝")
+	}
+	if !l.allow(other, now) {
+		t.Fatal("其它源 IP 不应受影响")
+	}
+	// 1 秒后按 relayRatePerSec 补充令牌
+	if !l.allow(victim, now.Add(time.Second)) {
+		t.Fatal("令牌应按时间补充")
+	}
+
+	// 限速表满：新源被拒，已有源不受影响
+	full := newRelayLimiter()
+	for i := 0; i < maxRelaySourceIPs; i++ {
+		full.allow(net.IPv4(10, 0, byte(i/256), byte(i%256)).String(), now)
+	}
+	if len(full.buckets) != maxRelaySourceIPs {
+		t.Fatalf("限速表应记录 %d 个源，got %d", maxRelaySourceIPs, len(full.buckets))
+	}
+	if full.allow("203.0.113.99", now) {
+		t.Fatal("限速表满时应拒绝新源")
+	}
+	if !full.allow("10.0.0.1", now) {
+		t.Fatal("表满不得影响已记录源")
 	}
 }

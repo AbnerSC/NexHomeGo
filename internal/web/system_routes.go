@@ -83,8 +83,40 @@ func registerAuthRoutes() {
 		if token == "" {
 			token = c.Query("token")
 		}
-		loggedIn := auth.Check(token) || auth.CheckAccessToken(c.Header("Access-Token"))
-		c.Ok(core.NewRow().Set("loggedIn", loggedIn))
+		if auth.Check(token) {
+			c.Ok(core.NewRow().Set("loggedIn", true))
+			return nil
+		}
+		// 接口令牌（Access-Token）：本端点免登录，且是令牌的唯一探测入口，响应直接返回布尔值，
+		// 无条件限速即构成在线爆破预言机。计数键采用双桶（详见 auth.RecordAccessTokenFailure）：
+		//   - 绝对桶：TCP 对端地址，不可伪造，任何来源的失败硬上限；
+		//   - 细分桶：仅当对端是「显式可信代理」时按真实客户端细分，避免代理后一人爆破误锁全员。
+		// 不进细分桶的情况：直连请求，或 auto 策略下仅因对端是私网而被当成可信代理——
+		// 那种场景可自带伪造转发头逐次换键绕过计数（与 loginLockKey 的注意事项一致）。
+		at := c.Header("Access-Token")
+		if at == "" {
+			c.Ok(core.NewRow().Set("loggedIn", false))
+			return nil
+		}
+		ip := c.PeerIP()
+		clientKey := ""
+		if core.TrustForwardedFromExplicit(ip, core.TrustProxyMode()) {
+			if ci := c.ClientIP(); ci != ip {
+				clientKey = ci
+			}
+		}
+		if remain := auth.AccessTokenLockRemainingMs(ip, clientKey); remain > 0 {
+			minutes := (remain + 59_999) / 60_000
+			c.Fail(http.StatusTooManyRequests, fmt.Sprintf("接口令牌校验失败次数过多，已临时锁定，请约 %d 分钟后再试", minutes))
+			return nil
+		}
+		if auth.CheckAccessToken(at) {
+			auth.ResetAccessTokenFailures(ip, clientKey)
+			c.Ok(core.NewRow().Set("loggedIn", true))
+			return nil
+		}
+		auth.RecordAccessTokenFailure(ip, clientKey)
+		c.Ok(core.NewRow().Set("loggedIn", false))
 		return nil
 	})
 
@@ -229,7 +261,7 @@ func registerSystemRoutes() {
 		if err != nil {
 			return err
 		}
-		c.Ok(core.NewRow().Set("token", token).Set("maxLength", auth.MaxAccessTokenLen))
+		c.Ok(core.NewRow().Set("token", token).Set("maxLength", auth.MaxAccessTokenLen).Set("minLength", auth.MinAccessTokenLen))
 		return nil
 	})
 	Route("PUT", "/api/system/access-token", func(c *Ctx) error {

@@ -104,7 +104,9 @@ func TestServeHTTPCSP(t *testing.T) {
 	if csp == "" {
 		t.Fatal("缺失 Content-Security-Policy")
 	}
-	for _, want := range []string{"default-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'"} {
+	// worker-src 必须显式包含 blob:：首页测速用 blob: Worker 统计下载字节，
+	// 缺失时浏览器回退到 script-src 而把 Worker 全部拦截（测速数值偏低、页面卡顿）。
+	for _, want := range []string{"default-src 'self'", "object-src 'none'", "base-uri 'none'", "frame-ancestors 'none'", "worker-src 'self' blob:"} {
 		if !strings.Contains(csp, want) {
 			t.Fatalf("CSP 缺少 %q: %s", want, csp)
 		}

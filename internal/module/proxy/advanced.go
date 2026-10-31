@@ -142,14 +142,14 @@ func parseAdvanced(text string) (*Advanced, error) {
 	dec := json.NewDecoder(strings.NewReader(text))
 	dec.UseNumber()
 	if err := dec.Decode(&raw); err != nil {
-		return nil, fmt.Errorf("advanced 不是合法 JSON: %s", err.Error())
+		return nil, core.NewBadRequest("advanced 不是合法 JSON: %s", err.Error())
 	}
 	if more := strings.TrimSpace(rest(dec)); more != "" {
-		return nil, fmt.Errorf("advanced 不是合法 JSON: trailing %q", more)
+		return nil, core.NewBadRequest("advanced 不是合法 JSON: trailing %q", more)
 	}
 	o, ok := raw.(map[string]interface{})
 	if !ok {
-		return nil, fmt.Errorf("advanced 必须是 JSON 对象")
+		return nil, core.NewBadRequest("advanced 必须是 JSON 对象")
 	}
 
 	var err error
@@ -163,7 +163,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "pathRewrite"); el != nil && !isNull {
 		pr, ok := el.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("pathRewrite 必须是 JSON 对象")
+			return nil, core.NewBadRequest("pathRewrite 必须是 JSON 对象")
 		}
 		from, err2 := requirePath(core.BodyStr(pr, "from"), "pathRewrite.from")
 		if err2 != nil {
@@ -174,7 +174,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 			return nil, err2
 		}
 		if from == "" || to == "" {
-			return nil, fmt.Errorf("pathRewrite 的 from/to 均不能为空")
+			return nil, core.NewBadRequest("pathRewrite 的 from/to 均不能为空")
 		}
 		a.PathRewriteFrom, a.PathRewriteTo = &from, &to
 	}
@@ -184,18 +184,18 @@ func parseAdvanced(text string) (*Advanced, error) {
 			return nil, err2
 		}
 		if v == "" {
-			return nil, fmt.Errorf("stripPrefix 不能为空字符串")
+			return nil, core.NewBadRequest("stripPrefix 不能为空字符串")
 		}
 		a.StripPrefix = &v
 	}
 	if has(o, "stripPrefix") && has(o, "pathRewrite") {
-		return nil, fmt.Errorf("stripPrefix 与 pathRewrite 只能二选一")
+		return nil, core.NewBadRequest("stripPrefix 与 pathRewrite 只能二选一")
 	}
 
 	if el, isNull := objGet(o, "timeout"); el != nil && !isNull {
 		t, ok := el.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("timeout 必须是 JSON 对象")
+			return nil, core.NewBadRequest("timeout 必须是 JSON 对象")
 		}
 		if a.ConnectSec, err = rangeInt(t, "connectSec", a.ConnectSec, 1, 120, "timeout.connectSec"); err != nil {
 			return nil, err
@@ -214,33 +214,33 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "basicAuth"); el != nil && !isNull {
 		ba, ok := el.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("basicAuth 必须是 JSON 对象")
+			return nil, core.NewBadRequest("basicAuth 必须是 JSON 对象")
 		}
 		a.AuthUser = strings.TrimSpace(core.BodyStr(ba, "user"))
 		a.AuthPass = core.BodyStr(ba, "pass")
 		if a.AuthUser != "" {
 			if a.AuthPass == "" {
-				return nil, fmt.Errorf("basicAuth 配置了 user 时 pass 不能为空")
+				return nil, core.NewBadRequest("basicAuth 配置了 user 时 pass 不能为空")
 			}
 			if strings.Contains(a.AuthUser, ":") || controlCharRe.MatchString(a.AuthUser) ||
 				controlCharRe.MatchString(a.AuthPass) {
-				return nil, fmt.Errorf("basicAuth 的 user 不能含冒号/控制字符")
+				return nil, core.NewBadRequest("basicAuth 的 user 不能含冒号/控制字符")
 			}
 		}
 	}
 	if el, isNull := objGet(o, "ipAllow"); el != nil && !isNull {
 		arr, ok := el.([]interface{})
 		if !ok {
-			return nil, fmt.Errorf("ipAllow 必须是 JSON 数组")
+			return nil, core.NewBadRequest("ipAllow 必须是 JSON 数组")
 		}
 		list := []string{}
 		for _, e := range arr {
 			v := strings.TrimSpace(strOf(e))
 			if v == "" {
-				return nil, fmt.Errorf("ipAllow 存在空条目")
+				return nil, core.NewBadRequest("ipAllow 存在空条目")
 			}
 			if ipAllowBadRe.MatchString(v) || controlCharRe.MatchString(v) {
-				return nil, fmt.Errorf("ipAllow 条目非法（应为 IP 或 IP 前缀，不能含空白/逗号）: %s", v)
+				return nil, core.NewBadRequest("ipAllow 条目非法（应为 IP 或 IP 前缀，不能含空白/逗号）: %s", v)
 			}
 			list = append(list, strings.ToLower(v))
 		}
@@ -250,7 +250,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "backendProtocol"); el != nil && !isNull {
 		a.BackendProtocol = strings.ToLower(strings.TrimSpace(core.BodyStr(o, "backendProtocol")))
 		if a.BackendProtocol != "http1" && a.BackendProtocol != "h2" {
-			return nil, fmt.Errorf("backendProtocol 只能是 http1 或 h2: %s", a.BackendProtocol)
+			return nil, core.NewBadRequest("backendProtocol 只能是 http1 或 h2: %s", a.BackendProtocol)
 		}
 	}
 	if a.H2MaxConcurrentStreams, err = rangeInt(o, "h2MaxConcurrentStreams", a.H2MaxConcurrentStreams, 1, 1000, "h2MaxConcurrentStreams"); err != nil {
@@ -262,7 +262,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "frontProtocol"); el != nil && !isNull {
 		a.FrontProtocol = strings.ToLower(strings.TrimSpace(core.BodyStr(o, "frontProtocol")))
 		if a.FrontProtocol != "h2" && a.FrontProtocol != "http1" {
-			return nil, fmt.Errorf("frontProtocol 只能是 h2 或 http1: %s", a.FrontProtocol)
+			return nil, core.NewBadRequest("frontProtocol 只能是 h2 或 http1: %s", a.FrontProtocol)
 		}
 	}
 	a.UpstreamKeepalive = core.BodyBool(o, "upstreamKeepalive", a.UpstreamKeepalive)
@@ -276,18 +276,18 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "static"); el != nil && !isNull {
 		s, ok := el.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("static 必须是 JSON 对象")
+			return nil, core.NewBadRequest("static 必须是 JSON 对象")
 		}
 		if iel, inNull := objGet(s, "indexFiles"); iel != nil && !inNull {
 			arr, ok := iel.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("static.indexFiles 必须是 JSON 数组")
+				return nil, core.NewBadRequest("static.indexFiles 必须是 JSON 数组")
 			}
 			idx := []string{}
 			for _, e := range arr {
 				v := strings.TrimSpace(strOf(e))
 				if !indexFileRe.MatchString(v) {
-					return nil, fmt.Errorf("static.indexFiles 条目非法（应为纯文件名，如 index.html）: %s", v)
+					return nil, core.NewBadRequest("static.indexFiles 条目非法（应为纯文件名，如 index.html）: %s", v)
 				}
 				idx = append(idx, v)
 			}
@@ -298,7 +298,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 		a.Static.Precompressed = core.BodyBool(s, "precompressed", a.Static.Precompressed)
 		if cc := strings.TrimSpace(core.BodyStr(s, "cacheControl")); cc != "" {
 			if strings.ContainsAny(cc, "\r\n") || len(cc) > 200 {
-				return nil, fmt.Errorf("static.cacheControl 不能含换行且不超过 200 字符: %s", cc)
+				return nil, core.NewBadRequest("static.cacheControl 不能含换行且不超过 200 字符: %s", cc)
 			}
 			a.Static.CacheControl = cc
 		}
@@ -306,7 +306,7 @@ func parseAdvanced(text string) (*Advanced, error) {
 	if el, isNull := objGet(o, "cache"); el != nil && !isNull {
 		c, ok := el.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("cache 必须是 JSON 对象")
+			return nil, core.NewBadRequest("cache 必须是 JSON 对象")
 		}
 		a.CacheEnabled = core.BodyBool(c, "enabled", a.CacheEnabled)
 		if a.CacheTtlSec, err = rangeInt(c, "ttlSec", a.CacheTtlSec, 1, 31536000, "cache.ttlSec"); err != nil {
@@ -325,13 +325,13 @@ func parseAdvanced(text string) (*Advanced, error) {
 		if eel, enumNull := objGet(c, "extensions"); eel != nil && !enumNull {
 			arr, ok := eel.([]interface{})
 			if !ok {
-				return nil, fmt.Errorf("cache.extensions 必须是 JSON 数组")
+				return nil, core.NewBadRequest("cache.extensions 必须是 JSON 数组")
 			}
 			ext := []string{}
 			for _, e := range arr {
 				v := strings.ToLower(strings.TrimSpace(strOf(e)))
 				if !extRe.MatchString(v) {
-					return nil, fmt.Errorf("cache.extensions 条目非法（应为纯扩展名，如 js）: %s", v)
+					return nil, core.NewBadRequest("cache.extensions 条目非法（应为纯扩展名，如 js）: %s", v)
 				}
 				ext = append(ext, v)
 			}
@@ -413,28 +413,28 @@ func parseHeaderOps(o map[string]interface{}, key string) ([]HeaderOp, error) {
 	}
 	arr, ok := el.([]interface{})
 	if !ok {
-		return nil, fmt.Errorf("%s 必须是 JSON 数组", key)
+		return nil, core.NewBadRequest("%s 必须是 JSON 数组", key)
 	}
 	list := []HeaderOp{}
 	for _, e := range arr {
 		h, ok := e.(map[string]interface{})
 		if !ok {
-			return nil, fmt.Errorf("%s 条目必须是 JSON 对象", key)
+			return nil, core.NewBadRequest("%s 条目必须是 JSON 对象", key)
 		}
 		op := strings.ToLower(strings.TrimSpace(core.BodyStr(h, "op")))
 		name := strings.TrimSpace(core.BodyStr(h, "name"))
 		value := strings.TrimSpace(core.BodyStr(h, "value"))
 		if op != "set" && op != "delete" {
-			return nil, fmt.Errorf("%s.op 只能是 set 或 delete: %s", key, op)
+			return nil, core.NewBadRequest("%s.op 只能是 set 或 delete: %s", key, op)
 		}
 		if !headerNameRe.MatchString(name) {
-			return nil, fmt.Errorf("%s.name 不是合法 HTTP 头名: %s", key, name)
+			return nil, core.NewBadRequest("%s.name 不是合法 HTTP 头名: %s", key, name)
 		}
 		if forbiddenHeaders[strings.ToLower(name)] {
-			return nil, fmt.Errorf("%s 不允许改写头: %s（由代理框架自动控制）", key, name)
+			return nil, core.NewBadRequest("%s 不允许改写头: %s（由代理框架自动控制）", key, name)
 		}
 		if op == "set" && value != "" && strings.ContainsAny(value, "\r\n") {
-			return nil, fmt.Errorf("%s.value 不能含换行（头注入风险）: %s", key, name)
+			return nil, core.NewBadRequest("%s.value 不能含换行（头注入风险）: %s", key, name)
 		}
 		list = append(list, HeaderOp{Op: op, Name: name, Value: value})
 	}
@@ -443,10 +443,10 @@ func parseHeaderOps(o map[string]interface{}, key string) ([]HeaderOp, error) {
 
 func requirePath(v, field string) (string, error) {
 	if v != "" && !strings.HasPrefix(v, "/") {
-		return "", fmt.Errorf("%s 必须以 / 开头: %s", field, v)
+		return "", core.NewBadRequest("%s 必须以 / 开头: %s", field, v)
 	}
 	if strings.ContainsAny(v, " \r\n") {
-		return "", fmt.Errorf("%s 不能含空白/换行: %s", field, v)
+		return "", core.NewBadRequest("%s 不能含空白/换行: %s", field, v)
 	}
 	return v, nil
 }
@@ -458,15 +458,15 @@ func rangeInt(o map[string]interface{}, key string, def, min, max int, field str
 	}
 	n, ok := el.(json.Number)
 	if !ok {
-		return 0, fmt.Errorf("%s 必须是整数", field)
+		return 0, core.NewBadRequest("%s 必须是整数", field)
 	}
 	f, err := n.Float64()
 	if err != nil || math.Trunc(f) != f || f < math.MinInt32 || f > math.MaxInt32 {
-		return 0, fmt.Errorf("%s 必须是整数", field)
+		return 0, core.NewBadRequest("%s 必须是整数", field)
 	}
 	v := int(f)
 	if v < min || v > max {
-		return 0, fmt.Errorf("%s 必须在 %d-%d 之间: %d", field, min, max, v)
+		return 0, core.NewBadRequest("%s 必须在 %d-%d 之间: %d", field, min, max, v)
 	}
 	return v, nil
 }
@@ -478,14 +478,14 @@ func rangeDouble(o map[string]interface{}, key string, def, min, max float64, fi
 	}
 	n, ok := el.(json.Number)
 	if !ok {
-		return 0, fmt.Errorf("%s 必须是数字", field)
+		return 0, core.NewBadRequest("%s 必须是数字", field)
 	}
 	v, err := n.Float64()
 	if err != nil {
-		return 0, fmt.Errorf("%s 必须是数字", field)
+		return 0, core.NewBadRequest("%s 必须是数字", field)
 	}
 	if v < min || v > max {
-		return 0, fmt.Errorf("%s 必须在 %s-%s 之间: %s", field, gsonFloat(min), gsonFloat(max), gsonFloat(v))
+		return 0, core.NewBadRequest("%s 必须在 %s-%s 之间: %s", field, gsonFloat(min), gsonFloat(max), gsonFloat(v))
 	}
 	return v, nil
 }

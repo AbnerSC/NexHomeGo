@@ -86,6 +86,26 @@ const (
 // 其余周期仅发包给配置+最近响应服务器
 const stunFullCycle = 5
 
+// UDP 转发会话护栏：监听端口对全网卡开放，而 UDP 源地址可任意伪造——每个新源地址
+// 的首包都会新建一个会话（socket + 协程 + 64KB 缓冲），不设上限时刷包即可耗尽内存
+// 与文件描述符，拖垮面板与全部穿透任务。故按「会话总数 + 源 IP 速率」双重设限，
+// 超限直接丢弃（数据面降级）；缓冲改用池复用，避免每会话常驻大块内存。
+const (
+	maxRelaySessions  = 512               // 单任务并发转发会话上限（≈512 fd）
+	maxRelaySourceIPs = 1024              // 限速表最多记录的源 IP 数（表本身不得成为放大面）
+	relayRatePerSec   = 50.0              // 单源 IP 每秒允许新建会话数
+	relayRateBurst    = 100.0             // 单源 IP 突发配额
+	relayLimiterIdle  = 2 * time.Minute   // 限速表条目空闲回收时长
+	relaySessionIdle  = 120 * time.Second // 会话空闲回收时长
+	relayWarnEvery    = 30 * time.Second  // 护栏丢弃告警节流
+)
+
+// relayBufPool 转发读写缓冲池：会话结束即归还，避免每会话常驻 64KB
+var relayBufPool = sync.Pool{New: func() interface{} {
+	b := make([]byte, 65535)
+	return &b
+}}
+
 // 公网入站验证专用串行执行队列（第三方 API 响应可达数十秒，绝不能占用全局调度池——
 // 占用会延迟保活导致 CGNAT 映射超时被回收：穿透静默失效的直接诱因），周期验证异步执行只留上次结论
 var (
@@ -146,6 +166,64 @@ func safeCall(job func()) {
 		}
 	}()
 	job()
+}
+
+// relayLimiter 按源 IP 的新建会话令牌桶：伪造源地址刷包时每个包都是「新会话」，
+// 必须限速才能保住会话表容量。仅限制新建会话（已建会话的数据转发不受影响）。
+type relayLimiter struct {
+	mu      sync.Mutex
+	buckets map[string]*relayBucket
+	lastGC  time.Time
+}
+
+type relayBucket struct {
+	tokens float64
+	last   time.Time
+}
+
+func newRelayLimiter() relayLimiter {
+	return relayLimiter{buckets: map[string]*relayBucket{}, lastGC: time.Now()}
+}
+
+// allow 该源 IP 当前是否允许新建会话（持续速率 relayRatePerSec，突发 relayRateBurst）。
+// 限速表满时拒绝新源：已建会话继续服务，新源等待空闲回收，避免表本身被撑爆。
+func (l *relayLimiter) allow(ip string, now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.gc(now)
+	b := l.buckets[ip]
+	if b == nil {
+		if len(l.buckets) >= maxRelaySourceIPs {
+			return false
+		}
+		b = &relayBucket{tokens: relayRateBurst, last: now}
+		l.buckets[ip] = b
+	}
+	if elapsed := now.Sub(b.last).Seconds(); elapsed > 0 {
+		b.tokens += elapsed * relayRatePerSec
+		if b.tokens > relayRateBurst {
+			b.tokens = relayRateBurst
+		}
+	}
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
+}
+
+// gc 回收空闲限速条目（最多每分钟一次）
+func (l *relayLimiter) gc(now time.Time) {
+	if now.Sub(l.lastGC) < time.Minute {
+		return
+	}
+	l.lastGC = now
+	for ip, b := range l.buckets {
+		if now.Sub(b.last) > relayLimiterIdle {
+			delete(l.buckets, ip)
+		}
+	}
 }
 
 // runner STUN 穿透任务运行器
@@ -224,6 +302,9 @@ type runner struct {
 	tcpListening atomic.Bool
 	sessions     map[string]*net.UDPConn
 	sessionsMu   sync.Mutex
+	relayLim     relayLimiter // 按源 IP 的新建会话限速
+	relayDropped atomic.Int64 // 护栏丢弃的入站包计数
+	relayWarnAt  atomic.Int64 // 护栏告警节流时间戳（ms）
 
 	stopMu sync.Mutex
 	stopCh chan struct{}
@@ -277,6 +358,7 @@ func newRunner(row *core.Row) *runner {
 		peerAddr:        strings.TrimSpace(strField(row, "peer_addr")),
 		upnpEnabled:     intField(row, "upnp_enabled") != 0,
 		sessions:        map[string]*net.UDPConn{},
+		relayLim:        newRelayLimiter(),
 		warnedKeepalive: map[string]bool{},
 	}
 	if r.keepaliveSec < 10 {
@@ -521,12 +603,24 @@ func (r *runner) stunCandidateOf(ip net.IP, port int) string {
 	return ""
 }
 
-// forwardToTarget UDP 业务数据转发：对端 -> 目标服务；目标响应经会话 socket 回流
+// forwardToTarget UDP 业务数据转发：对端 -> 目标服务；目标响应经会话 socket 回流。
+// 源地址可伪造，每包都可能触发新建会话，故新建前先过「会话总数 + 源 IP 速率」双重护栏：
+// 超限直接丢弃（仅降级数据面），避免刷包耗尽内存与文件描述符拖垮整个进程。
 func (r *runner) forwardToTarget(data []byte, peer *net.UDPAddr) {
 	peerKey := peer.IP.String() + ":" + strconv.Itoa(peer.Port)
 	r.sessionsMu.Lock()
 	session, ok := r.sessions[peerKey]
 	if !ok {
+		if len(r.sessions) >= maxRelaySessions {
+			r.sessionsMu.Unlock()
+			r.dropRelay("转发会话数已达上限 " + strconv.Itoa(maxRelaySessions))
+			return
+		}
+		if !r.relayLim.allow(peer.IP.String(), time.Now()) {
+			r.sessionsMu.Unlock()
+			r.dropRelay("源 IP " + peer.IP.String() + " 新建会话速率超限")
+			return
+		}
 		target := &net.UDPAddr{IP: net.ParseIP(r.targetIp), Port: r.targetPort}
 		if target.IP == nil {
 			r.sessionsMu.Unlock()
@@ -549,11 +643,24 @@ func (r *runner) forwardToTarget(data []byte, peer *net.UDPAddr) {
 	}
 }
 
-// relayBack 目标服务响应回传对端，会话空闲 120 秒自动关闭
+// dropRelay 护栏丢弃计数与告警（每任务最多每 30 秒一条，避免刷屏与日志放大）
+func (r *runner) dropRelay(reason string) {
+	dropped := r.relayDropped.Add(1)
+	now := time.Now().UnixMilli()
+	last := r.relayWarnAt.Load()
+	if now-last < relayWarnEvery.Milliseconds() || !r.relayWarnAt.CompareAndSwap(last, now) {
+		return
+	}
+	core.LogWarn(core.LogStun, "任务["+r.name+"] "+reason+"，已丢弃 "+strconv.FormatInt(dropped, 10)+" 个入站包")
+}
+
+// relayBack 目标服务响应回传对端，会话空闲 relaySessionIdle 自动关闭（缓冲取自池，结束归还）
 func (r *runner) relayBack(session *net.UDPConn, peer *net.UDPAddr, peerKey string) {
-	buf := make([]byte, 65535)
+	bufp := relayBufPool.Get().(*[]byte)
+	defer relayBufPool.Put(bufp)
+	buf := *bufp
 	for r.running.Load() {
-		_ = session.SetReadDeadline(time.Now().Add(120 * time.Second))
+		_ = session.SetReadDeadline(time.Now().Add(relaySessionIdle))
 		n, err := session.Read(buf)
 		if err != nil {
 			break // 超时或任务停止，正常结束会话

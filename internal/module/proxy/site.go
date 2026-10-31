@@ -110,25 +110,25 @@ func withTarget(s *Site, target string) (*Site, error) {
 	target = strings.TrimSpace(target)
 	// 禁 query/fragment 的判定需区分“解析失败”与“携带参数”：先拒绝空白字符再解析
 	if strings.ContainsAny(target, " \t\r\n") {
-		return nil, fmt.Errorf("后端地址格式不正确: %s", target)
+		return nil, core.NewBadRequest("后端地址格式不正确: %s", target)
 	}
 	u, err := url.Parse(target)
 	if err != nil {
-		return nil, fmt.Errorf("后端地址格式不正确: %s", target)
+		return nil, core.NewBadRequest("后端地址格式不正确: %s", target)
 	}
 	sc := strings.ToLower(u.Scheme)
 	if sc != "http" && sc != "https" {
-		return nil, fmt.Errorf("后端地址必须以 http:// 或 https:// 开头: %s", target)
+		return nil, core.NewBadRequest("后端地址必须以 http:// 或 https:// 开头: %s", target)
 	}
 	host := u.Hostname()
 	if host == "" {
-		return nil, fmt.Errorf("后端地址缺少主机名: %s", target)
+		return nil, core.NewBadRequest("后端地址缺少主机名: %s", target)
 	}
 	port := 0
 	if ps := u.Port(); ps != "" {
 		p, cerr := strconv.Atoi(ps)
 		if cerr != nil {
-			return nil, fmt.Errorf("后端地址格式不正确: %s", target)
+			return nil, core.NewBadRequest("后端地址格式不正确: %s", target)
 		}
 		port = p
 	}
@@ -139,14 +139,14 @@ func withTarget(s *Site, target string) (*Site, error) {
 		}
 	}
 	if port < 1 || port > 65535 {
-		return nil, fmt.Errorf("后端端口非法: %d", port)
+		return nil, core.NewBadRequest("后端端口非法: %d", port)
 	}
 	base := u.Path
 	for strings.HasSuffix(base, "/") {
 		base = base[:len(base)-1]
 	}
 	if u.RawQuery != "" || u.Fragment != "" {
-		return nil, fmt.Errorf("后端地址不能携带查询参数或片段: %s", target)
+		return nil, core.NewBadRequest("后端地址不能携带查询参数或片段: %s", target)
 	}
 	r := *s
 	r.Scheme, r.BackendHost, r.BackendPort, r.BasePath = sc, host, port, base
@@ -177,14 +177,14 @@ func withStaticRoot(s *Site, target string, checkExists bool) (*Site, error) {
 func staticRootDir(target string, checkExists bool) (string, error) {
 	v := strings.TrimSpace(target)
 	if v == "" {
-		return "", fmt.Errorf("静态站点目录不能为空")
+		return "", core.NewBadRequest("静态站点目录不能为空")
 	}
 	if strings.ContainsAny(v, "\r\n\x00") {
-		return "", fmt.Errorf("静态站点目录不能含换行/控制字符: %s", v)
+		return "", core.NewBadRequest("静态站点目录不能含换行/控制字符: %s", v)
 	}
 	p := filepath.Clean(filepath.FromSlash(v))
 	if !filepath.IsAbs(p) {
-		return "", fmt.Errorf("静态站点目录必须是绝对路径（如 /var/www/site 或 D:/www/site）: %s", v)
+		return "", core.NewBadRequest("静态站点目录必须是绝对路径（如 /var/www/site 或 D:/www/site）: %s", v)
 	}
 	if err := guardDataDir(p); err != nil {
 		return "", err
@@ -192,10 +192,10 @@ func staticRootDir(target string, checkExists bool) (string, error) {
 	if checkExists {
 		st, err := os.Stat(p)
 		if err != nil {
-			return "", fmt.Errorf("静态站点目录不存在或不可读: %s", v)
+			return "", core.NewBadRequest("静态站点目录不存在或不可读: %s", v)
 		}
 		if !st.IsDir() {
-			return "", fmt.Errorf("静态站点目录不是文件夹: %s", v)
+			return "", core.NewBadRequest("静态站点目录不是文件夹: %s", v)
 		}
 	}
 	return filepath.ToSlash(p), nil
@@ -220,14 +220,14 @@ func guardDataDir(p string) error {
 	if p == htmlAbs || strings.HasPrefix(p+sep, htmlAbs+sep) {
 		return nil
 	}
-	return fmt.Errorf("静态站点目录不能使用程序数据目录: %s", filepath.ToSlash(p))
+	return core.NewBadRequest("静态站点目录不能使用程序数据目录: %s", filepath.ToSlash(p))
 }
 
 // validateDomains 域名合法性校验（创建/更新接口用）。
 func validateDomains(csv string) error {
 	list := splitList(csv)
 	if len(list) == 0 {
-		return fmt.Errorf("匹配域名不能为空")
+		return core.NewBadRequest("匹配域名不能为空")
 	}
 	for _, d := range list {
 		body := d
@@ -235,7 +235,7 @@ func validateDomains(csv string) error {
 			body = d[2:]
 		}
 		if !targetDomainRe.MatchString(body) {
-			return fmt.Errorf("域名格式不正确: %s", d)
+			return core.NewBadRequest("域名格式不正确: %s", d)
 		}
 	}
 	return nil
@@ -246,7 +246,7 @@ func parsePaths(csv string) ([]string, error) {
 	var list []string
 	for _, p := range splitList(csv) {
 		if !strings.HasPrefix(p, "/") {
-			return nil, fmt.Errorf("路径前缀必须以 / 开头: %s", p)
+			return nil, core.NewBadRequest("路径前缀必须以 / 开头: %s", p)
 		}
 		list = append(list, p)
 	}

@@ -1030,7 +1030,7 @@
                     <table>
                         <thead><tr><th style="width:190px">字段</th><th>说明</th></tr></thead>
                         <tbody>
-                        <tr><td>Access-Token</td><td>长度 <b>8~64 位</b>，仅支持<b>字母、数字、中划线、下划线</b>；<b>留空保存即停用</b>。点「随机生成」自动填入 32 位高强度随机串，也可手动输入；「复制」按钮可一键复制。</td></tr>
+                        <tr><td>Access-Token</td><td>长度 <b>32~64 位</b>，仅支持<b>字母、数字、中划线、下划线</b>；<b>留空保存即停用</b>。点「随机生成」自动填入 48 位高强度随机串，也可手动输入；「复制」按钮可一键复制。</td></tr>
                         </tbody>
                     </table>
                     <pre>curl -H "Access-Token: &lt;令牌&gt;" http://地址:端口/api/cert/tasks</pre>
@@ -1038,6 +1038,7 @@
                         <li>保存后<b>立即生效</b>，无需重启 Web 服务；修改后旧令牌立即失效。</li>
                         <li>令牌不参与<b>单点登录</b>与 24 小时会话过期，不会把浏览器会话踢下线。</li>
                         <li>启用<b>安全入口</b>时，接口路径同样需要带入口前缀（如 <code>/入口/api/cert/tasks</code>）。</li>
+                        <li>令牌校验入口（<code>/api/auth/check</code>）做<b>双桶</b>失败计数与临时锁定：<b>直连时按 TCP 对端</b>连续失败 <b>60</b> 次、<b>经显式可信代理</b>（<code>security.trustedProxies</code> 或 <code>security.trustProxy=always</code>）时按<b>真实客户端</b>连续失败 <b>10</b> 次，即锁定 <b>15 分钟</b>；锁定期间该来源的令牌校验返回 429。计数为内存态，重启归零；<b>其它接口不受锁定影响</b>，代理后一段客户的爆破也不会连坐其他客户端。</li>
                     </ul>
                     <div class="doc-note warn"><b>安全提醒</b>令牌为明文保存，且能力<b>等同于登录密码</b>（可下载证书私钥、导出数据库、修改全部配置）。请仅在可信网络或 HTTPS 下使用，一旦泄露应立即重新生成；不需要时留空停用。</div>
                 </details>

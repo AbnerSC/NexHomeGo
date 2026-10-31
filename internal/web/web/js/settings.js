@@ -22,7 +22,7 @@ async function renderSettings() {
     let sec = { maxFails: 3, lockMinutes: 30 };
     try { sec = await api('GET', '/api/auth/security'); } catch (e) { /* ignore */ }
     // 接口访问令牌（请求头 Access-Token，权限等同已登录用户）
-    let at = { token: '', maxLength: 64 };
+    let at = { token: '', minLength: 32, maxLength: 64 };
     try { at = await api('GET', '/api/system/access-token'); } catch (e) { /* ignore */ }
     const memPct = metrics.memTotalMB > 0 ? Math.round(metrics.memUsedMB * 100 / metrics.memTotalMB) : 0;
     // 进程内存（RSS/上限）：来自 /api/system/info，与系统物理内存区分，便于定位进程增长
@@ -97,9 +97,11 @@ async function renderSettings() {
         <h3 style="font-size:14px;margin-bottom:12px">接口访问令牌</h3>
         <div class="tip" style="margin-bottom:12px">在请求头中携带 <b>Access-Token: &lt;令牌&gt;</b> 即可调用全部接口，
           权限等同于<b>已登录用户</b>（不参与单点登录与 24 小时会话过期），适合其他系统/脚本（如邮件服务器定时拉取证书）长期调用。
+          令牌强度要求较高：最短 ${at.minLength || 32} 位；探测入口连续校验失败将临时锁定 15 分钟
+          （直连按来源 60 次，经可信代理时按真实客户端 10 次）；
           令牌为明文保存，请仅在可信网络或 HTTPS 下使用；启用安全入口时接口路径同样需带入口前缀。</div>
         <form id="atForm" class="form-grid">
-          <div class="field full"><label>Access-Token（8~64 位字母/数字/-/_，留空停用）</label>
+          <div class="field full"><label>Access-Token（${at.minLength || 32}~${at.maxLength || 64} 位字母/数字/-/_，留空停用）</label>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
               <input name="token" maxlength="${at.maxLength || 64}" style="flex:1;min-width:240px"
                      placeholder="留空表示停用，可点右侧按钮随机生成" value="${esc(at.token || '')}">
@@ -178,12 +180,14 @@ async function renderSettings() {
     window.atGenerate = () => {
         const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
         const limit = 256 - (256 % chars.length);
+        // 生成 48 位（高于最小长度要求，留出安全余量）
+        const want = Math.min(Math.max(48, at.minLength || 32), at.maxLength || 64);
         let out = '';
-        while (out.length < 32) {
-            const buf = new Uint8Array(32);
+        while (out.length < want) {
+            const buf = new Uint8Array(want);
             crypto.getRandomValues(buf);
             for (const b of buf) {
-                if (b < limit && out.length < 32) out += chars[b % chars.length];
+                if (b < limit && out.length < want) out += chars[b % chars.length];
             }
         }
         $('#atForm').querySelector('[name="token"]').value = out;
