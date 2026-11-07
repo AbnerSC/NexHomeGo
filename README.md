@@ -109,27 +109,39 @@ docker compose up -d
 <div style="text-align: center">
 <img src="docs/ScreenShot_1.png" style="width: 100%" alt="总览">
 </div>
+
 - DDNS同步
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_2.png" style="width: 100%" alt="DDNS同步">
 </div>
+
 - STUN穿透
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_3.png" style="width: 100%" alt="STUN穿透">
 </div>
+
 - SSL证书
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_4.png" style="width: 100%" alt="SSL证书">
 </div>
+
 - 代理中心
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_5.png" style="width: 100%" alt="代理中心">
 </div>
+
 - 内存诊断
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_6.png" style="width: 100%" alt="内存诊断">
 </div>
+
 - 系统设置
+
 <div style="text-align: center">
 <img src="docs/ScreenShot_7.png" style="width: 100%" alt="系统设置">
 </div>
