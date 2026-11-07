@@ -102,7 +102,9 @@ docker compose up -d
 2. 登录密码：首次启动随机生成并打印到控制台，无内置固定密码
 
 ## 五、待办
--[X] 暂无
+
+
+## 六、加入群聊
 
 <p>
 <img src="docs/qrcode_qq.jpg" width="200">
