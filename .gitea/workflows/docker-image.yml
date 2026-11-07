@@ -21,7 +21,7 @@
 #       NEXUS_USERNAME   Nexus 账号
 #       NEXUS_PASSWORD   Nexus 密码
 #       GOPROXY_URL      Go 模块代理地址
-#                        留空则回退 Go 官方默认代理）
+#                        留空则回退 Go 官方默认代理
 #       DOCKER_PROXY     Docker Hub 代理仓库前缀
 #                        留空则直连 docker.io 拉取基础镜像）
 #   - 已注册可用的 act_runner（能跑 Docker 构建；labels 与下方 runs-on 一致）
