@@ -12,3 +12,5 @@
 /.routes.txt
 **.log
 /_smoke
+/bin
+/build

@@ -102,3 +102,10 @@ docker compose up -d
 2. 登录密码：首次启动随机生成并打印到控制台，无内置固定密码（源码中的数据库文件`data/nexhome.db`用户密码：123456789012）
 
 ## 五、待办
+-[X] 暂无
+
+<p>
+<img src="docs/qrcode_qq.jpg" width="200">
+</p>
+
+> 点击链接加入群聊【AI开发新姿势】：https://qm.qq.com/q/ACxOjcQQqA
