@@ -1,0 +1,369 @@
+# =====================================================================
+# Gitea Actions：把 Gitea 的版本（Release）同步发布到 GitHub
+#
+# 背景分工：
+#   - Gitea 侧已配置镜像仓库，提交与 tag 会即时同步到 GitHub，
+#     但 Gitea 的 Release（标题、正文、附件）不随镜像同步过去，
+#     本工作流负责补齐 Release 这一层
+#   - 与 .gitea/workflows/docker-image.yml 互不影响，可同时触发
+#   - 本目录（.gitea/workflows）会被镜像带到 GitHub，但 GitHub 只解析
+#     .github/workflows，因此不会在 GitHub 侧重复执行本工作流
+#
+# 触发方式：
+#   1) 自动：在 Gitea 发布版本（release 事件 published）后立即触发，
+#      将该版本原样发布到 GitHub
+#      （Gitea 官方文档已支持 release 的 published/edited 触发；若你的
+#      Gitea 版本较旧而未触发，请改用下面的手动方式。
+#      注意：事件触发只会使用 tag 所在提交上的工作流文件，
+#      本文件加入仓库之前发布的版本不会自动触发，需手动补同步）
+#   2) 手动：Actions 页面 Run workflow（或重跑某次运行），
+#      Tag 支持 `1.2.3` 或 `release-v1.2.3`，留空则取最新发布版本，
+#      用于补同步历史版本、失败重试
+#   重复执行是幂等的：GitHub 上已存在同名 Release 时，自动触发会用
+#   Gitea 内容覆盖修正，手动触发默认跳过（需要覆盖把 force_update 填 true）；
+#   同名附件一律跳过，不重复上传。
+#   希望「改动 Gitea Release 正文也自动回写 GitHub」时，把下面
+#   release.types 追加 edited 即可。
+#
+# 同步内容：
+#   - tag：GitHub 缺失时按 Gitea Release 的目标提交创建（前提是该提交已被
+#     镜像同步到 GitHub，否则明确报错，等镜像追平后手动重跑即可）
+#   - Release 标题、正文、预发布标记
+#   - Release 附件：逐个从 Gitea 下载（按 size 校验完整性）再上传 GitHub
+#
+# 前置条件（凭据一律配在 Gitea 侧，不要写进本文件）：
+#   - API_TOKEN_GITHUB  GitHub 凭据：Fine-grained PAT，对目标仓库授予
+#                        Contents: Read and write
+#                        配置位置：组织/仓库 Settings -> Actions -> Secrets
+#   - GITEA_API_TOKEN   Gitea 凭据：用户或组织 Token，仓库只读权限即可
+#                        （Release 为公开仓库时可留空，回退用 Actions 内置 token）
+#   两者都写成 `secrets.X || vars.X`：Secret 优先（日志中会掩码，推荐），
+#   实例级全局变量也能用（Gitea 仅支持全局 variables、不支持全局 secrets，
+#   且全局变量对本实例所有仓库可见、日志不掩码，仅在无法使用 Secret 时退而求其次）
+#   - 可选全局变量（不配置则用下面 env 的默认值）：
+#       GITHUB_SYNC_REPO    GitHub 目标仓库 owner/repo（默认 AbnerSC/NexHomeGo）
+#       GITHUB_API_BASE     GitHub API 地址（默认 https://api.github.com；
+#                           国内 runner 直连超时可改为反代/加速域名）
+#       GITHUB_UPLOAD_BASE  GitHub 附件上传地址（默认 https://uploads.github.com，
+#                           使用 API 反代时需一并改为对应的上传域名）
+#       GITEA_API_BASE      Gitea API 地址（默认由内置 GITHUB_SERVER_URL 推导，
+#                           runner 需走内网地址访问 Gitea 时显式指定）
+#
+# 运行环境：容器内需有 curl 与 jq，缺失时本工作流自动安装
+#          （兼容 apt / apk / dnf / microdnf / yum）。
+# =====================================================================
+name: Release 同步发布到 GitHub
+
+on:
+  # 发布版本时自动同步（Gitea 发布 Release 会同时产生 release-vX.Y.Z tag）
+  release:
+    types:
+      - published
+  # 手动补同步：历史版本、失败重试、覆盖更新
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要同步的 Gitea 版本（1.2.3 或 release-v1.2.3；留空 = 最新发布版本）'
+        required: false
+        default: ''
+      force_update:
+        description: 'GitHub 已存在同名 Release 时是否用 Gitea 内容覆盖（true/false）'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  # 同一版本的同步串行执行，避免手动重跑与自动触发互相覆盖
+  group: release-sync-github-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  # GitHub 目标仓库（可用全局变量覆盖，换仓库时不必改本文件）
+  GITHUB_SYNC_REPO: ${{ vars.GITHUB_SYNC_REPO || 'AbnerSC/NexHomeGo' }}
+  # GitHub API / 附件上传地址
+  GITHUB_API_BASE: ${{ vars.GITHUB_API_BASE || 'https://api.github.com' }}
+  GITHUB_UPLOAD_BASE: ${{ vars.GITHUB_UPLOAD_BASE || 'https://uploads.github.com' }}
+  # Gitea API 地址：留空则用内置变量推导（GITHUB_SERVER_URL 即 Gitea 站点地址）
+  GITEA_API_BASE: ${{ vars.GITEA_API_BASE }}
+
+jobs:
+  sync-release:
+    name: 同步 Release 到 GitHub
+    # 沿用 docker-image.yml 的同一批 runner；本任务只调用 API + curl，
+    # 不需要 Docker，任何带 bash 的镜像均可运行
+    runs-on: golang
+    timeout-minutes: 20
+    steps:
+      - name: 准备 curl 与 jq
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 全程只调 API，不需要检出代码，故无 actions/checkout 步骤
+          if command -v curl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+            echo "依赖已就绪"
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update -qq && apt-get install -y -qq --no-install-recommends curl ca-certificates jq
+          elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache curl jq
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf -y install curl jq
+          elif command -v microdnf >/dev/null 2>&1; then
+            microdnf -y install curl jq
+          elif command -v yum >/dev/null 2>&1; then
+            yum -y install curl jq
+          else
+            echo "::error::容器镜像内缺少 curl/jq，且未识别到可用的包管理器；请换用自带 curl+jq 的 runner 镜像"
+            exit 1
+          fi
+          echo "curl: $(curl --version | head -n1)"
+          echo "jq:   $(jq --version)"
+
+      - name: 同步 Release
+        shell: bash
+        env:
+          # 触发来源：release published 事件 或 workflow_dispatch
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          INPUT_FORCE: ${{ github.event.inputs.force_update }}
+          # Gitea 侧仓库路径与站点地址（Gitea Actions 内置变量）
+          GITEA_REPO: ${{ github.repository }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          # 凭据：Secret 优先，回退实例级全局变量；
+          # Gitea Token 再兜底一层 Actions 内置 token（公开仓库够用）
+          GH_TOKEN: ${{ secrets.API_TOKEN_GITHUB || vars.API_TOKEN_GITHUB }}
+          GITEA_TOKEN_CFG: ${{ secrets.GITEA_API_TOKEN || vars.GITEA_API_TOKEN }}
+          GITEA_TOKEN_BUILTIN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          # ---------- 0. 地址、凭据与公共函数 ----------
+          GITEA_API="${GITEA_API_BASE:-${GITEA_SERVER_URL%/}/api/v1}"
+          GITEA_API="${GITEA_API%/}"
+          GITEA_WEB="${GITEA_SERVER_URL%/}"
+          GITEA_TOKEN="${GITEA_TOKEN_CFG:-$GITEA_TOKEN_BUILTIN}"
+
+          err() { echo "::error::$1"; exit 1; }
+
+          [[ -n "${GITHUB_SYNC_REPO:-}" && "$GITHUB_SYNC_REPO" == */* ]] \
+            || err "GITHUB_SYNC_REPO 必须是 owner/repo 形式，当前为：${GITHUB_SYNC_REPO:-（空）}"
+          [[ -n "${GH_TOKEN:-}" ]] \
+            || err "未配置 GitHub 凭据：请在 Gitea 的 Actions Secrets 中新增 API_TOKEN_GITHUB（GitHub Fine-grained PAT，Contents 读写）"
+          [[ -n "$GITEA_TOKEN" ]] \
+            || err "未配置 Gitea 凭据：请新增 GITEA_API_TOKEN（Token 权限：仓库只读）"
+
+          # 请求头数组：GitHub 用 Bearer，Gitea 用 token
+          GH_HDR=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
+          GT_HDR=(-H "Authorization: token $GITEA_TOKEN")
+
+          # http <输出文件> <方法> <URL> [curl 额外参数...] -> 打印 HTTP 状态码
+          # 仅 GET 重试：创建 Release / 上传附件属非幂等写操作，
+          # 重复提交会得到 422，反而把一次实际已成功的同步判为失败
+          http() {
+            local out="$1" method="$2" url="$3"; shift 3
+            local retry_args=()
+            if [[ "$method" == "GET" ]]; then
+              retry_args=(--retry 3 --retry-delay 2)
+            fi
+            local code
+            if ! code=$(curl -sS "${retry_args[@]}" -L -o "$out" -w '%{http_code}' \
+                          -X "$method" "$@" "$url"); then
+              echo "000"
+              return 0
+            fi
+            echo "$code"
+          }
+          # 打印响应体片段，便于定位权限/速率限制/参数校验错误
+          peek() { head -c 400 "$1" 2>/dev/null | tr -d '\n'; }
+
+          # ---------- 1. 解析待同步的 tag ----------
+          RAW_TAG=""
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            RAW_TAG="${EVENT_TAG:-}"
+            echo "触发方式：发布版本事件（自动同步）"
+          else
+            RAW_TAG="${INPUT_TAG:-}"
+            echo "触发方式：手动运行（同步指定版本）"
+          fi
+
+          if [[ -z "${RAW_TAG// }" ]]; then
+            # 手动触发未填 tag：取 Gitea 最新发布版本
+            code=$(http "$TMP/latest.json" GET "$GITEA_API/repos/$GITEA_REPO/releases/latest" "${GT_HDR[@]}")
+            [[ "$code" == "200" ]] || err "获取 Gitea 最新发布版本失败（HTTP $code）：$(peek "$TMP/latest.json")"
+            RAW_TAG=$(jq -r '.tag_name // ""' "$TMP/latest.json")
+            echo "未指定 tag，使用最新发布版本：$RAW_TAG"
+          fi
+
+          # 简写 X.Y.Z 自动补全为 release-vX.Y.Z
+          if [[ "$RAW_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG="release-v${RAW_TAG#v}"
+          else
+            TAG="$RAW_TAG"
+          fi
+          [[ "$TAG" =~ ^release-v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || err "版本 tag 格式必须为 release-vX.Y.Z（也可简填 X.Y.Z），当前为：${TAG:-（空）}"
+          echo "待同步 tag：$TAG"
+
+          FORCE_UPDATE="${INPUT_FORCE:-false}"
+          [[ "$FORCE_UPDATE" == "true" || "$FORCE_UPDATE" == "false" ]] \
+            || err "force_update 只能填 true 或 false，当前为：$FORCE_UPDATE"
+          # 自动触发无需该选项：默认以 Gitea 内容为准修正 GitHub
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            FORCE_UPDATE="true"
+          fi
+          echo "GitHub 已存在同名 Release 时覆盖：$FORCE_UPDATE"
+
+          # ---------- 2. 读取 Gitea Release 元数据 ----------
+          code=$(http "$TMP/gitea.json" GET "$GITEA_API/repos/$GITEA_REPO/releases/tags/$TAG" "${GT_HDR[@]}")
+          [[ "$code" == "200" ]] \
+            || err "Gitea 中不存在版本 $TAG 或 Token 无读取权限（HTTP $code）：$(peek "$TMP/gitea.json")"
+
+          if [[ "$(jq -r '.draft // false' "$TMP/gitea.json")" == "true" ]]; then
+            err "Gitea 上 $TAG 仍为草稿，请先发布该版本再同步"
+          fi
+          PRERELEASE=$(jq -r 'if .prerelease == true then "true" else "false" end' "$TMP/gitea.json")
+          TITLE=$(jq -r '.name // ""' "$TMP/gitea.json")
+          COMMITISH=$(jq -r '.target_commitish // ""' "$TMP/gitea.json")
+          ASSET_TOTAL=$(jq -r '(.assets // []) | length' "$TMP/gitea.json")
+          [[ -n "$TITLE" ]] || TITLE="$TAG"
+          # 正文含换行/引号，交给 --rawfile 读文件，避免 shell 转义踩坑
+          jq -r '.body // ""' "$TMP/gitea.json" > "$TMP/body.txt"
+          echo "Gitea Release：$TITLE（prerelease=$PRERELEASE，附件=$ASSET_TOTAL 个，target_commitish=${COMMITISH:-（空）}）"
+
+          # ---------- 3. 确认 GitHub 侧 tag 可用 ----------
+          # 镜像已同步 tag 时直接复用（不传 target_commitish，避免 GitHub 移动已有 tag）；
+          # 缺失时把 Gitea 的目标提交交给 GitHub，由创建 Release 的接口顺带建 tag。
+          GH_TARGET=""
+          code=$(http "$TMP/ghtag.json" GET "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/git/ref/tags/$TAG" "${GH_HDR[@]}")
+          if [[ "$code" != "200" ]]; then
+            echo "GitHub 上不存在 tag $TAG（HTTP $code），尝试基于 Gitea 的目标提交创建"
+            [[ -n "$COMMITISH" ]] || err "Gitea Release 未提供 target_commitish，且 GitHub 缺失该 tag，无法定位提交"
+            if [[ "$COMMITISH" =~ ^[0-9a-fA-F]{7,40}$ ]]; then
+              GH_TARGET="$COMMITISH"
+            else
+              # 界面发布时 target_commitish 往往是分支名，需在 GitHub 侧解析为分支头提交
+              code=$(http "$TMP/ghbr.json" GET "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/git/ref/heads/$COMMITISH" "${GH_HDR[@]}")
+              [[ "$code" == "200" ]] || err "GitHub 上既没有 tag $TAG，也没有分支 $COMMITISH（HTTP $code）；请确认镜像同步已推送该提交后手动重跑"
+              GH_TARGET=$(jq -r '.object.sha // ""' "$TMP/ghbr.json")
+            fi
+            [[ -n "$GH_TARGET" ]] || err "未能从 GitHub 解析出提交号（分支：$COMMITISH）"
+            code=$(http "$TMP/ghcommit.json" GET "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/git/commits/$GH_TARGET" "${GH_HDR[@]}")
+            [[ "$code" == "200" ]] \
+              || err "提交 $GH_TARGET 在 GitHub 上还不存在（HTTP $code）；镜像同步可能尚未完成，稍后手动重跑本工作流即可"
+            echo "将在 GitHub 上基于提交 $GH_TARGET 创建 tag $TAG"
+          else
+            echo "GitHub 上 tag $TAG 已存在（镜像同步已就绪）"
+          fi
+
+          # ---------- 4. 创建或更新 GitHub Release ----------
+          jq -n \
+            --arg tag "$TAG" \
+            --arg name "$TITLE" \
+            --rawfile body "$TMP/body.txt" \
+            --argjson prerelease "$PRERELEASE" \
+            --arg commitish "$GH_TARGET" \
+            '{tag_name: $tag, name: $name, body: $body, draft: false, prerelease: $prerelease}
+             + (if $commitish != "" then {target_commitish: $commitish} else {} end)' > "$TMP/create.json"
+
+          code=$(http "$TMP/ghrel.json" GET "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/releases/tags/$TAG" "${GH_HDR[@]}")
+          if [[ "$code" == "200" ]]; then
+            REL_ID=$(jq -r '.id' "$TMP/ghrel.json")
+            echo "GitHub Release 已存在：id=$REL_ID"
+            if [[ "$FORCE_UPDATE" == "true" ]]; then
+              jq '{name: .name, body: .body, prerelease: .prerelease, draft: false}' "$TMP/create.json" > "$TMP/patch.json"
+              code=$(http "$TMP/ghrel.json" PATCH "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/releases/$REL_ID" \
+                      "${GH_HDR[@]}" -H "Content-Type: application/json" --data @"$TMP/patch.json")
+              [[ "$code" == "200" ]] || err "更新 GitHub Release 失败（HTTP $code）：$(peek "$TMP/ghrel.json")"
+              echo "已用 Gitea 内容覆盖 GitHub Release 的标题/正文/预发布标记"
+            else
+              echo "force_update=false，保留 GitHub 现有 Release 内容（附件仍会补传缺失项）"
+            fi
+          else
+            code=$(http "$TMP/ghrel.json" POST "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/releases" \
+                    "${GH_HDR[@]}" -H "Content-Type: application/json" --data @"$TMP/create.json")
+            [[ "$code" == "201" ]] || err "创建 GitHub Release 失败（HTTP $code）：$(peek "$TMP/ghrel.json")"
+            REL_ID=$(jq -r '.id' "$TMP/ghrel.json")
+            echo "已创建 GitHub Release：id=$REL_ID"
+          fi
+          REL_URL=$(jq -r '.html_url // ""' "$TMP/ghrel.json")
+
+          # ---------- 5. 同步 Release 附件 ----------
+          # 上传地址固定由 GITHUB_UPLOAD_BASE 拼接（不用响应里的 upload_url 模板，
+          # 便于国内 runner 统一改走反代域名）
+          UPLOAD_URL="$GITHUB_UPLOAD_BASE/repos/$GITHUB_SYNC_REPO/releases/$REL_ID/assets"
+          code=$(http "$TMP/ghassets.json" GET "$GITHUB_API_BASE/repos/$GITHUB_SYNC_REPO/releases/$REL_ID/assets?per_page=100" "${GH_HDR[@]}")
+          [[ "$code" == "200" ]] || err "获取 GitHub Release 附件列表失败（HTTP $code）：$(peek "$TMP/ghassets.json")"
+
+          uploaded=0
+          skipped=0
+          i=0
+          while [[ "$i" -lt "$ASSET_TOTAL" ]]; do
+            # 逐项按索引取值（不用 read 解析 TSV：制表符属空白分隔符，空字段会被折叠错位）
+            a_name=$(jq -r --argjson i "$i" '.assets[$i].name // ""' "$TMP/gitea.json")
+            a_size=$(jq -r --argjson i "$i" '.assets[$i].size // 0' "$TMP/gitea.json")
+            a_uuid=$(jq -r --argjson i "$i" '.assets[$i].uuid // ""' "$TMP/gitea.json")
+            a_url=$(jq -r --argjson i "$i" '.assets[$i].browser_download_url // ""' "$TMP/gitea.json")
+            i=$((i + 1))
+            [[ -n "$a_name" ]] || continue
+            # GitHub 上同名附件已存在（多为上次中断后重跑）→ 跳过，保持幂等
+            if [[ "$(jq -r --arg n "$a_name" '[.[] | select(.name == $n)] | length' "$TMP/ghassets.json")" != "0" ]]; then
+              echo "附件已存在，跳过：$a_name"
+              skipped=$((skipped + 1))
+              continue
+            fi
+            # 候选下载地址：优先 API 给的 browser_download_url，
+            # 再补一个站内 attachments 路由，兼容不同 Gitea 版本的返回形态
+            candidates=()
+            if [[ -n "$a_url" ]]; then
+              candidates+=("$a_url")
+            fi
+            if [[ -n "$a_uuid" ]]; then
+              candidates+=("$GITEA_WEB/$GITEA_REPO/attachments/$a_uuid")
+            fi
+            [[ "${#candidates[@]}" -gt 0 ]] || err "附件 $a_name 没有可用的下载地址"
+
+            ok="false"
+            for url in "${candidates[@]}"; do
+              code=$(http "$TMP/asset.bin" GET "$url" "${GT_HDR[@]}")
+              if [[ "$code" != "200" ]]; then
+                echo "下载失败（HTTP $code），换下一个地址：$url"
+                continue
+              fi
+              # 按 Gitea 记录的 size 校验：能识破「拿到的其实是 JSON 元数据/登录页」这类情况
+              got=$(wc -c < "$TMP/asset.bin" | tr -d ' ')
+              if [[ "$a_size" != "0" && "$got" != "$a_size" ]]; then
+                echo "下载内容大小不符（期望 $a_size，实际 $got），换下一个地址：$url"
+                continue
+              fi
+              ok="true"
+              break
+            done
+            [[ "$ok" == "true" ]] || err "从 Gitea 下载附件失败：$a_name（Token 需具备仓库读取权限，且附件未被删除）"
+
+            q_name=$(jq -rn --arg n "$a_name" '$n | @uri')
+            code=$(http "$TMP/asset_resp.json" POST "$UPLOAD_URL?name=$q_name" \
+                    "${GH_HDR[@]}" -H "Content-Type: application/octet-stream" \
+                    --data-binary "@$TMP/asset.bin")
+            [[ "$code" == "201" ]] || err "上传附件到 GitHub 失败：$a_name（HTTP $code）：$(peek "$TMP/asset_resp.json")"
+            uploaded=$((uploaded + 1))
+            echo "附件同步完成：$a_name -> $(jq -r '.browser_download_url // empty' "$TMP/asset_resp.json")"
+            rm -f "$TMP/asset.bin" "$TMP/asset_resp.json"
+          done
+
+          # ---------- 6. 输出结果 ----------
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          {
+            echo "### Release 已同步到 GitHub"
+            echo "- tag：\`$TAG\`"
+            echo "- 标题：$TITLE"
+            echo "- 预发布：$PRERELEASE"
+            echo "- 附件：新上传 $uploaded 个，跳过已存在 $skipped 个（Gitea 共 $ASSET_TOTAL 个）"
+            if [[ -n "$REL_URL" ]]; then
+              echo "- 地址：$REL_URL"
+            fi
+          } >> "$summary"
+          echo "同步完成：$TAG -> $GITHUB_SYNC_REPO（$REL_URL）"
