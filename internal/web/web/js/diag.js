@@ -80,8 +80,8 @@ function diagChart(history) {
     }
     return `
       <div class="diag-legend">
-        <span><i class="dot" style="background:var(--cyan)"></i>进程 RSS（当前 ${fmtDiagMB(last?.rss)}）</span>
-        <span><i class="dot" style="background:var(--green)"></i>Go 堆（当前 ${fmtDiagMB(last?.heap)}）</span>
+        <span><i class="dot" style="background:var(--chart-line)"></i>进程 RSS（当前 ${fmtDiagMB(last?.rss)}）</span>
+        <span><i class="dot" style="background:var(--cyan)"></i>Go 堆（当前 ${fmtDiagMB(last?.heap)}）</span>
         <span class="muted small">纵轴满刻度 ${fmtDiagMB(maxV)}，共 ${n} 个样本${first ? `，跨度 ${first.time} ~ ${last.time}` : ''}</span>
       </div>
       <div class="diag-chart">
@@ -89,8 +89,8 @@ function diagChart(history) {
         <div class="diag-plot" id="diagPlot">
           <svg class="diag-svg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
             ${gLines}
-            <polyline fill="none" stroke="var(--cyan)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${rPts}"/>
-            <polyline fill="none" stroke="var(--green)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${hPts}"/>
+            <polyline fill="none" style="stroke:var(--chart-line)" stroke-width="1.6" vector-effect="non-scaling-stroke" points="${rPts}"/>
+            <polyline fill="none" style="stroke:var(--cyan)" stroke-width="1.6" stroke-dasharray="5 4" vector-effect="non-scaling-stroke" points="${hPts}"/>
           </svg>
           <div class="diag-crosshair" id="diagCross"></div>
           <div class="diag-tip" id="diagTip" hidden></div>
@@ -119,8 +119,8 @@ function bindDiagChart() {
         cross.style.display = 'block';
         tip.hidden = false;
         tip.innerHTML = `<div class="t">${esc(s.time || '')}</div>`
-            + `<div><i class="dot" style="background:var(--cyan)"></i>进程 RSS ${fmtDiagMB(s.rss)}</div>`
-            + `<div><i class="dot" style="background:var(--green)"></i>Go 堆 ${fmtDiagMB(s.heap)}</div>`;
+            + `<div><i class="dot" style="background:var(--chart-line)"></i>进程 RSS ${fmtDiagMB(s.rss)}</div>`
+            + `<div><i class="dot" style="background:var(--cyan)"></i>Go 堆 ${fmtDiagMB(s.heap)}</div>`;
         tip.style.left = xPct + '%';
         tip.classList.toggle('flip', xPct > 62); // 靠近右缘时把气泡翻到准线左侧，避免溢出
     });

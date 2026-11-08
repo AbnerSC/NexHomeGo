@@ -212,8 +212,8 @@ $('#btnLogout').addEventListener('click', async () => {
 
 /* ---------------- 主题切换（浅色/深色，默认浅色） ----------------
    主题属性 data-theme 由 <head> 内联脚本在首屏渲染前设定（避免闪屏），
-   本段仅负责按钮文案同步与切换持久化；具体配色全部在 style.css 的
-   html[data-theme="light"] 覆盖块里，无需在此改动样式。 */
+   本段仅负责按钮文案同步与切换持久化；两套主题在 style.css 中只差一组颜色变量
+   （:root 为深色基线，html[data-theme="light"] 仅覆写变量层），无需在此改动样式。 */
 const THEME_KEY = 'nx_theme';
 
 /** 当前生效主题：非 dark 一律视为 light（与内联初始化默认值一致） */
@@ -324,7 +324,7 @@ function setPage(page) {
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
     $('#pageTitle').textContent = PAGE_TITLES[page];
     $('#pageBody').innerHTML = '<p class="muted">加载中...</p>';
-    RENDER[page]().catch(e => { $('#pageBody').innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; });
+    RENDER[page]().catch(e => { $('#pageBody').innerHTML = `<p style="color:var(--err-fg)">${esc(e.message)}</p>`; });
 }
 
 $$('.nav-item').forEach(n => n.addEventListener('click', () => setPage(n.dataset.page)));

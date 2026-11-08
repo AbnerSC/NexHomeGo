@@ -93,7 +93,7 @@ function esaCell(t) {
 function notifyCell(t) {
     if (t.notify_enabled !== 1) return '<span class="muted small">未启用</span>';
     const n = notifySnapshot(t.notify_channels).length;
-    return n ? badge(n + ' 个渠道', 'info') : '<span class="small" style="color:var(--red)">未选渠道</span>';
+    return n ? badge(n + ' 个渠道', 'info') : '<span class="small" style="color:var(--err-fg)">未选渠道</span>';
 }
 
 /** 通知渠道勾选列解析（非法/缺失时为空数组），元素为渠道 id 字符串 */
@@ -432,7 +432,7 @@ window.stunForm = async (id) => {
 
     window.stunEsaLoadSites = async () => {
         const cfg = esaVal('#fEsaCred');
-        if (!cfg) { esaTip('<span style="color:var(--red)">请先选择服务商凭证配置</span>'); return; }
+        if (!cfg) { esaTip('<span style="color:var(--err-fg)">请先选择服务商凭证配置</span>'); return; }
         const sel = $('#fEsaSite');
         const cur = sel.value || String(t.esa_site_id || '');
         sel.innerHTML = '<option value="">站点加载中…</option>';
@@ -442,7 +442,7 @@ window.stunForm = async (id) => {
             const sites = r.sites || [];
             if (!sites.length) {
                 sel.innerHTML = '<option value="">无可用站点</option>';
-                esaTip('<span style="color:var(--red)">该账号下未找到 ESA 站点，请先到阿里云 ESA 控制台添加站点。</span>');
+                esaTip('<span style="color:var(--err-fg)">该账号下未找到 ESA 站点，请先到阿里云 ESA 控制台添加站点。</span>');
                 return;
             }
             sel.innerHTML = '<option value="">请选择站点</option>' + sites.map(s =>
@@ -454,7 +454,7 @@ window.stunForm = async (id) => {
             esaTip('');
         } catch (e) {
             sel.innerHTML = '<option value="">站点加载失败</option>';
-            esaTip(`<span style="color:var(--red)">${esc(e.message)}</span>`);
+            esaTip(`<span style="color:var(--err-fg)">${esc(e.message)}</span>`);
         }
     };
 
@@ -562,7 +562,7 @@ window.stunWhAdd = (w, status) => {
     const bodyText = w.body || '';
     const st = status && status.result
         ? `上次调用：<span>${esc(status.time || '')}</span> `
-          + `<b style="color:${String(status.result).startsWith('OK') ? '#34d399' : '#fb7185'}">${esc(status.result)}</b>`
+          + `<b style="color:${String(status.result).startsWith('OK') ? 'var(--ok-fg)' : 'var(--err-fg)'}">${esc(status.result)}</b>`
         : '尚未调用';
     const isPost = w.method !== 'GET';
     row.innerHTML = `
@@ -710,11 +710,11 @@ function fmtTrafficBytes(b) {
 
 /* ---------- 流量折线图（纯 SVG 实现，无第三方依赖） ---------- */
 
-/** 三个维度的主题色与标题（小时蓝 / 天紫 / 月绿，避免同色单调） */
+/** 三个维度的图色与标题：三色（品牌蓝 / 青 / 绿），均取自主题变量，切换主题自动重着色 */
 const TF_THEMES = {
-    hour: { color: '#0ea5e9', label: '按小时（近 24 小时）' },
-    day: { color: '#8b5cf6', label: '按天（近 30 天）' },
-    month: { color: '#10b981', label: '按月（近 12 月）' },
+    hour: { color: 'var(--chart-line)', label: '按小时（近 24 小时）' },
+    day: { color: 'var(--cyan)', label: '按天（近 30 天）' },
+    month: { color: 'var(--ok-fg)', label: '按月（近 12 月）' },
 };
 
 const tfPad = n => String(n).padStart(2, '0');
@@ -742,8 +742,9 @@ function tfNiceMax(v) {
 }
 
 /**
- * 渲染单个流量折线图：Catmull-Rom 平滑曲线 + 主题色渐变面积 + 虚线网格
+ * 渲染单个流量折线图：Catmull-Rom 平滑曲线 + 单色描边与极浅面积填充 + 虚线网格
  * + 悬浮十字引导线与最近点吸附气泡，最新时段末端常亮高亮点。
+ * 注：SVG 呈现属性不支持 var()，颜色一律通过 style 内联声明，才能随浅/深主题切换。
  */
 function tfRenderChart(host, name, points, theme, tickFmt, tipFmt) {
     const W = Math.max(host.clientWidth || 0, 240), H = 170;
@@ -776,8 +777,8 @@ function tfRenderChart(host, name, points, theme, tickFmt, tipFmt) {
     let grid = '';
     for (let g = 0; g <= 4; g++) {
         const y = (P.t + ih - (ih * g) / 4).toFixed(1);
-        grid += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${g ? 'rgba(148,163,200,.10)' : 'rgba(148,163,200,.24)'}" stroke-dasharray="${g ? '3 4' : ''}"/>`
-            + `<text x="${P.l - 7}" y="${+y + 3.5}" text-anchor="end" font-size="9.5" fill="#aab6d8">${fmtTrafficBytes((nice * g) / 4)}</text>`;
+        grid += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" style="stroke:var(--${g ? 'border' : 'border-strong'})" stroke-dasharray="${g ? '3 4' : ''}"/>`
+            + `<text x="${P.l - 7}" y="${+y + 3.5}" text-anchor="end" font-size="9.5" style="fill:var(--muted)">${fmtTrafficBytes((nice * g) / 4)}</text>`;
     }
     // 横轴刻度：按标签实际宽度自动疏密（宽度够则全部显示），末尾必显且不与相邻刻度重叠
     const labels = pts.map(p => String(tickFmt(p.key)));
@@ -789,34 +790,24 @@ function tfRenderChart(host, name, points, theme, tickFmt, tipFmt) {
         const isLast = i === pts.length - 1;
         // 非末位需落在步长上；末位前一个刻度离末位过近时让位，避免文字重叠
         if (!isLast && (i % step || pts.length - 1 - i < step)) return;
-        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#aab6d8">${esc(labels[i])}</text>`;
+        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" style="fill:var(--muted)">${esc(labels[i])}</text>`;
     });
 
     const last = pts[pts.length - 1];
     host.innerHTML = `
       <svg width="${W}" height="${H}" style="display:block;overflow:visible">
-        <defs>
-          <linearGradient id="tfa-${name}" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="${c}" stop-opacity=".30"/>
-            <stop offset=".65" stop-color="${c}" stop-opacity=".07"/>
-            <stop offset="1" stop-color="${c}" stop-opacity="0"/>
-          </linearGradient>
-          <filter id="tfg-${name}" x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="${c}" flood-opacity=".35"/>
-          </filter>
-        </defs>
         ${grid}${ticks}
-        ${area ? `<path d="${area}" fill="url(#tfa-${name})"/>` : ''}
-        <path d="${line}" fill="none" stroke="${c}" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" filter="url(#tfg-${name})"/>
-        ${peak > 0 && last ? `<circle cx="${last.x}" cy="${last.y}" r="3.4" fill="#fff" stroke="${c}" stroke-width="2.2"/>` : ''}
-        ${peak === 0 ? `<text x="${P.l + iw / 2}" y="${P.t + ih / 2}" text-anchor="middle" font-size="11" fill="#b7c1cf">该时段暂无流量</text>` : ''}
-        <line id="tf-guide-${name}" y1="${P.t}" y2="${P.t + ih}" stroke="${c}" stroke-width="1.2" stroke-dasharray="4 3" opacity="0"/>
-        <circle id="tf-cursor-${name}" r="4.2" fill="${c}" stroke="#fff" stroke-width="1.6" opacity="0"/>
+        ${area ? `<path d="${area}" style="fill:${c}" fill-opacity=".10" stroke="none"/>` : ''}
+        <path d="${line}" fill="none" style="stroke:${c}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        ${peak > 0 && last ? `<circle cx="${last.x}" cy="${last.y}" r="3.2" style="fill:var(--panel);stroke:${c}" stroke-width="1.8"/>` : ''}
+        ${peak === 0 ? `<text x="${P.l + iw / 2}" y="${P.t + ih / 2}" text-anchor="middle" font-size="11" style="fill:var(--muted)">该时段暂无流量</text>` : ''}
+        <line id="tf-guide-${name}" y1="${P.t}" y2="${P.t + ih}" style="stroke:${c}" stroke-width="1" stroke-dasharray="4 3" opacity="0"/>
+        <circle id="tf-cursor-${name}" r="4" style="fill:${c};stroke:var(--panel)" stroke-width="1.6" opacity="0"/>
         <rect id="tf-hit-${name}" x="${P.l}" y="${P.t}" width="${iw}" height="${ih}" fill="transparent" style="cursor:crosshair"/>
       </svg>
       <div class="tf-tip" id="tf-tip-${name}" style="display:none"></div>`;
 
-    // 悬浮交互：最近点吸附 + 十字引导线 + 深色气泡提示
+    // 悬浮交互：最近点吸附 + 十字引导线 + 气泡提示
     const svg = host.querySelector('svg');
     const guide = host.querySelector(`#tf-guide-${name}`);
     const cursor = host.querySelector(`#tf-cursor-${name}`);
@@ -867,7 +858,7 @@ window.stunTraffic = async id => {
           <div class="tf-grid">
             ${['hour', 'day', 'month'].map(k => `
               <div class="tf-card">
-                <div class="tf-head"><span class="tf-dot" style="background:${TF_THEMES[k].color};box-shadow:0 0 0 3px ${TF_THEMES[k].color}22"></span>${TF_THEMES[k].label}
+                <div class="tf-head"><span class="tf-dot" style="background:${TF_THEMES[k].color}"></span>${TF_THEMES[k].label}
                   <span class="tf-peak">峰值 ${peak(k)}</span></div>
                 <div class="tf-body" id="tf-chart-${k}"></div>
               </div>`).join('')}

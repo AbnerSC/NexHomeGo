@@ -101,7 +101,7 @@ async function refreshProxy() {
     // 告警条
     const err = st.lastError || '';
     $('#proxyAlert').innerHTML = err
-        ? `<div class="tip" style="border-left:4px solid var(--red);background:rgba(255,80,80,.08)">⚠️ ${esc(err)}</div>`
+        ? `<div class="tip" style="border-left-color:var(--red);background:var(--err-bg);color:var(--err-fg)">⚠️ ${esc(err)}</div>`
         : '';
     // 证书清单
     const certs = L.certs || [];
@@ -148,7 +148,7 @@ async function refreshProxyRows(preferedStatus) {
           <td class="docker-mono small" style="word-break:break-all">${isStatic ? '📁 ' : ''}${esc(s.target)}</td>
           <td class="small">${cert}${s.force_https ? '<div class="muted">强跳</div>' : ''}</td>
           <td class="small">${m.active ? '活跃 ' + m.active + ' · ' : ''}${(m.qpm || 0) + ' 次/分'}
-            ${(m.errors || 0) > 0 ? `<div class="small" style="color:var(--red)">${m.errors} 错误</div>` : ''}
+            ${(m.errors || 0) > 0 ? `<div class="small" style="color:var(--err-fg)">${m.errors} 错误</div>` : ''}
             ${m.lastError ? `<div class="small muted" title="${esc(m.lastError)}">最近: ${esc(String(m.lastError).slice(0, 28))}…</div>` : ''}</td>
           <td><label class="switch"><input type="checkbox" ${s.enabled === 1 ? 'checked' : ''} onchange="pxToggle(${s.id}, this.checked)"><span class="slider"></span></label></td>
           <td>
@@ -544,7 +544,7 @@ function pxParseJson() {
         return true;
     } catch (e) {
         $('#aJsonHint').className = 'small';
-        $('#aJsonHint').style.color = 'var(--red)';
+        $('#aJsonHint').style.color = 'var(--err-fg)';
         $('#aJsonHint').textContent = 'JSON 解析失败：' + e.message;
         return false;
     }

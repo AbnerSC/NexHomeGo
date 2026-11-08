@@ -90,7 +90,7 @@ window.certValidate = async id => {
 window.certShowHint = async id => {
     const t = (await api('GET', '/api/cert/tasks')).find(x => x.id === id);
     modal('DNS 验证提示', `<p class="muted small" style="margin-bottom:10px">请到域名解析服务商添加以下 TXT 记录，生效后点击「完成验证」：</p>
-      <pre style="background:var(--code-bg);border:1px solid var(--border);color:#a5f3fc;padding:12px;border-radius:8px;white-space:pre-wrap;font-size:13px">${esc(t.dns_hint || '无')}</pre>`);
+      <pre style="background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:12px;border-radius:8px;white-space:pre-wrap;font-size:13px">${esc(t.dns_hint || '无')}</pre>`);
 };
 
 window.certAutoRenew = async (id, checked) => {
@@ -181,7 +181,7 @@ window.certForm = async (id) => {
           <input name="webhook_url" placeholder="https://example.com/hooks/cert，留空则不推送" value="${esc(t.webhook_url || '')}">
           <div class="small muted" style="margin-top:6px;line-height:1.7">
             以 <b>Content-Type: application/json</b> 的 <b>HTTP POST</b> 发送如下请求体，接收端按此字段解析即可（签发/续期成功后自动触发，失败不影响证书，仅在日志告警）：
-            <pre style="background:var(--code-bg);border:1px solid var(--border);color:#a5f3fc;padding:8px 10px;border-radius:6px;white-space:pre-wrap;font-size:12px;margin:6px 0 0;word-break:break-all">{
+            <pre style="background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;white-space:pre-wrap;font-size:12px;margin:6px 0 0;word-break:break-all">{
   "event": "certificate.issued",
   "taskId": "任务ID",
   "name": "任务名称",

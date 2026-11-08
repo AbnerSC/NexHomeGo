@@ -177,7 +177,7 @@ window.ddnsForm = async (id) => {
             const sites = r.sites || [];
             if (!sites.length) {
                 sel.innerHTML = '<option value="">无可用站点</option>';
-                hint.className = 'small'; hint.style.color = 'var(--red)';
+                hint.className = 'small'; hint.style.color = 'var(--err-fg)';
                 hint.textContent = '未在阿里云 ESA 找到可用站点，请先到阿里云 ESA 控制台添加站点后再创建任务。';
                 return;
             }
@@ -189,7 +189,7 @@ window.ddnsForm = async (id) => {
             }
         } catch (e) {
             sel.innerHTML = '<option value="">加载失败</option>';
-            hint.className = 'small'; hint.style.color = 'var(--red)'; hint.textContent = e.message;
+            hint.className = 'small'; hint.style.color = 'var(--err-fg)'; hint.textContent = e.message;
         }
     };
     window.ddnsModeChanged = m => {
@@ -211,10 +211,10 @@ window.ddnsForm = async (id) => {
                 local_nic: f.get('local_nic') || ''
             });
             p.textContent = '即将同步的 IP: ' + r.ip;
-            p.style.color = 'var(--green)';
+            p.style.color = 'var(--ok-fg)';
         } catch (e) {
             p.textContent = e.message;
-            p.style.color = 'var(--red)';
+            p.style.color = 'var(--err-fg)';
         }
     };
     window.ddnsProviderChanged(t.provider || 'ALIYUN_DNS', true);

@@ -153,14 +153,15 @@ async function renderHome() {
         html += '<div class="nav-grid">';
         tiles.forEach((t, i) => {
             const meta = metas[i];
-            // 形状类：分析成功用判定结果；有图标但分析失败用通用玻璃框；无图标用 emoji 框
+            // 形状类：分析成功用判定结果；有图标但分析失败用通用淡底框；无图标用 emoji 框
             const shapeCls = t.it.icon_url ? (meta ? meta.shape : 'is-auto') : 'is-emoji';
-            const accent = meta ? meta.accent : '109,139,255';
+            // 每卡主色仅用于图标底托着色与悬停描边；分析失败时回落为品牌蓝（与 CSS 默认 --tile-accent 一致）
+            const accent = meta ? meta.accent : '0,113,227';
             const icon = t.it.icon_url
                 ? `<img src="${esc(iconSrc(t.it.icon_url))}" onerror="this.replaceWith(document.createTextNode('🌍'))">`
                 : '🌍';
             html += `
-            <div class="nav-tile" style="--tile-accent:${accent};--i:${i}" title="${esc(t.tip)}" onclick="window.open(${jsq(t.url)},'_blank')">
+            <div class="nav-tile" style="--tile-accent:${accent}" title="${esc(t.tip)}" onclick="window.open(${jsq(t.url)},'_blank')">
               <div class="tile-actions">
                 <button class="btn small" onclick="event.stopPropagation();navForm(${t.it.id})">编辑</button>
                 <button class="btn small danger" onclick="event.stopPropagation();navDelete(${t.it.id})">删除</button>
@@ -273,7 +274,7 @@ window.navBgForm = async () => {
             <button type="button" class="btn small" onclick="navImageManage(navBgPick)">从图库选择</button>
           </div>
           <div class="small muted">系统内地址两种来源：①「图片管理」中上传的图片（/nav-icons/xxx.png）；② 自行放入程序 data/images 目录的文件，以 /images/bg.png 引用。
-            外部地址为任意 http(s) 图片直链。背景经模糊处理后铺满导航首页，仅影响首页观感；留空则恢复默认浅色底。</div>
+            外部地址为任意 http(s) 图片直链。背景经模糊处理后铺满导航首页，仅影响首页观感；留空则恢复当前主题的默认底。</div>
         </div>
         <div class="form-foot full">
           <button type="button" class="btn" onclick="closeModal()">取消</button>

@@ -166,8 +166,9 @@ function dvNiceMax(v) {
 }
 
 /**
- * 每日总访问折线图：Catmull-Rom 平滑曲线 + 主题色渐变描边与面积 + 虚线网格
+ * 每日总访问折线图：Catmull-Rom 平滑曲线 + 单色描边（随主题取 --chart-line）+ 极浅面积填充 + 虚线网格
  * + 悬浮最近点吸附气泡，最新一天末端常亮高亮点；尺寸按容器实测绘制（纵向填满所在栅格行）。
+ * 注：SVG 呈现属性不支持 var()，颜色一律通过 style 内联声明，才能随浅/深主题切换。
  */
 function drawVisitChart(host, days) {
     if (!host) return;
@@ -200,45 +201,32 @@ function drawVisitChart(host, days) {
     let grid = '';
     for (let g = 0; g <= 4; g++) {
         const y = (P.t + ih - (ih * g) / 4).toFixed(1);
-        grid += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" stroke="${g ? 'rgba(148,163,200,.10)' : 'rgba(148,163,200,.24)'}" stroke-dasharray="${g ? '3 4' : ''}"/>`
-            + `<text x="${P.l - 7}" y="${+y + 3.5}" text-anchor="end" font-size="9.5" fill="#aab6d8">${fmtCount((nice * g) / 4)}</text>`;
+        grid += `<line x1="${P.l}" y1="${y}" x2="${W - P.r}" y2="${y}" style="stroke:var(--${g ? 'border' : 'border-strong'})" stroke-dasharray="${g ? '3 4' : ''}"/>`
+            + `<text x="${P.l - 7}" y="${+y + 3.5}" text-anchor="end" font-size="9.5" style="fill:var(--muted)">${fmtCount((nice * g) / 4)}</text>`;
     }
     // 横轴日期刻度（点少全显，点多隔取样且末尾必显）
     let ticks = '';
     const step = Math.max(1, Math.ceil(pts.length / 5));
     pts.forEach((p, i) => {
         if (i % step && i !== pts.length - 1) return;
-        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#aab6d8">${esc((p.day || '').slice(5))}</text>`;
+        ticks += `<text x="${p.x}" y="${H - 6}" text-anchor="middle" font-size="9.5" style="fill:var(--muted)">${esc((p.day || '').slice(5))}</text>`;
     });
 
     const last = pts[pts.length - 1];
     host.innerHTML = `
       <svg width="${W}" height="${H}" style="display:block">
-        <defs>
-          <linearGradient id="dvc-line" x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stop-color="#38bdf8"/><stop offset=".55" stop-color="#6d8bff"/><stop offset="1" stop-color="#a855f7"/>
-          </linearGradient>
-          <linearGradient id="dvc-area" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#6d8bff" stop-opacity=".30"/>
-            <stop offset=".65" stop-color="#6d8bff" stop-opacity=".07"/>
-            <stop offset="1" stop-color="#6d8bff" stop-opacity="0"/>
-          </linearGradient>
-          <filter id="dvc-glow" x="-30%" y="-30%" width="160%" height="160%">
-            <feDropShadow dx="0" dy="2" stdDeviation="2.5" flood-color="#6d8bff" flood-opacity=".35"/>
-          </filter>
-        </defs>
         ${grid}${ticks}
-        ${area ? `<path d="${area}" fill="url(#dvc-area)"/>` : ''}
-        <path d="${line}" fill="none" stroke="url(#dvc-line)" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round" filter="url(#dvc-glow)"/>
-        ${peak > 0 && last ? `<circle cx="${last.x}" cy="${last.y}" r="3.4" fill="#fff" stroke="#6d8bff" stroke-width="2.2"/>` : ''}
-        ${peak === 0 ? `<text x="${P.l + iw / 2}" y="${P.t + ih / 2}" text-anchor="middle" font-size="11" fill="#b7c1cf">该时段暂无访问</text>` : ''}
-        <line id="dvc-guide" y1="${P.t}" y2="${P.t + ih}" stroke="#6d8bff" stroke-width="1.2" stroke-dasharray="4 3" opacity="0"/>
-        <circle id="dvc-cursor" r="4.2" fill="#6d8bff" stroke="#fff" stroke-width="1.6" opacity="0"/>
+        ${area ? `<path d="${area}" style="fill:var(--chart-line)" fill-opacity=".10" stroke="none"/>` : ''}
+        <path d="${line}" fill="none" style="stroke:var(--chart-line)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        ${peak > 0 && last ? `<circle cx="${last.x}" cy="${last.y}" r="3.2" style="fill:var(--panel);stroke:var(--chart-line)" stroke-width="1.8"/>` : ''}
+        ${peak === 0 ? `<text x="${P.l + iw / 2}" y="${P.t + ih / 2}" text-anchor="middle" font-size="11" style="fill:var(--muted)">该时段暂无访问</text>` : ''}
+        <line id="dvc-guide" y1="${P.t}" y2="${P.t + ih}" style="stroke:var(--chart-line)" stroke-width="1" stroke-dasharray="4 3" opacity="0"/>
+        <circle id="dvc-cursor" r="4" style="fill:var(--chart-line);stroke:var(--panel)" stroke-width="1.6" opacity="0"/>
         <rect id="dvc-hit" x="${P.l}" y="${P.t}" width="${iw}" height="${ih}" fill="transparent" style="cursor:crosshair"/>
       </svg>
       <div class="tf-tip" id="dvc-tip" style="display:none"></div>`;
 
-    // 悬浮交互：最近点吸附 + 十字引导线 + 深色气泡提示
+    // 悬浮交互：最近点吸附 + 十字引导线 + 气泡提示
     const svg = host.querySelector('svg');
     const guide = host.querySelector('#dvc-guide');
     const cursor = host.querySelector('#dvc-cursor');
@@ -267,7 +255,7 @@ function drawVisitChart(host, days) {
 async function renderDashboard() {
     let d;
     try { d = await api('GET', '/api/dashboard'); }
-    catch (e) { $('#pageBody').innerHTML = `<p style="color:var(--red)">${esc(e.message)}</p>`; return; }
+    catch (e) { $('#pageBody').innerHTML = `<p style="color:var(--err-fg)">${esc(e.message)}</p>`; return; }
     const sys = d.system || {}, ddns = d.ddns || {}, stun = d.stun || {}, cert = d.cert || {};
     const mon = d.monitor || {}, docker = d.docker || {}, proxy = d.proxy || {}, visits = d.visits || {};
 

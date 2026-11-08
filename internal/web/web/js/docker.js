@@ -28,7 +28,7 @@ async function renderDocker() {
     try {
         ov = await api('GET', '/api/docker/overview');
     } catch (e) {
-        $('#pageBody').innerHTML = `<div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:#fda4af">Docker 状态获取失败：${esc(e.message)}</div>`;
+        $('#pageBody').innerHTML = `<div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:var(--err-fg)">Docker 状态获取失败：${esc(e.message)}</div>`;
         setRefresh(refreshDocker, 10000);
         return;
     }
@@ -441,12 +441,12 @@ window.dockerComposeFile = async name => {
     const blocks = (r.files || []).map(f => f.content != null
         ? `<h4>${esc(f.path)}</h4><div class="docker-mono docker-yaml">${esc(f.content)}</div>`
         : `<h4>${esc(f.path || f.name)}</h4>
-           <div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:#fda4af">${esc(f.error || '读取失败')}</div>`).join('');
+           <div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:var(--err-fg)">${esc(f.error || '读取失败')}</div>`).join('');
     modal(`编排脚本 · ${name}`, `
       <div class="muted small" style="margin-bottom:10px">工作目录：<span class="docker-mono">${esc(r.workdir || '-')}</span></div>
       ${r.error ? `<div class="tip">${esc(r.error)}</div>` : ''}
       ${blocks || '<div class="tip">未发现该项目的编排文件</div>'}
-      ${r.hint ? `<div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:#fda4af">${esc(r.hint)}</div>` : ''}`, 'wide');
+      ${r.hint ? `<div class="tip" style="background:var(--err-soft-bg);border-color:var(--err-soft-border);color:var(--err-fg)">${esc(r.hint)}</div>` : ''}`, 'wide');
 };
 
 window.dockerSwitchTab = t => {
