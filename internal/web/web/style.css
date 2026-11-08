@@ -398,7 +398,7 @@ body::after {
 .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn.ghost:hover { color: var(--red); box-shadow: none; }
 .btn.small { padding: 4px 11px; font-size: 12px; border-radius: 8px; }
-/* 链接式按钮（如顶栏「使用文档」）：抑制全局 a / a:hover 的下划线，保持与 button 按钮同形 */
+/* 链接式按钮（如顶栏按钮）：抑制全局 a / a:hover 的下划线，保持与 button 按钮同形 */
 a.btn, a.btn:visited { text-decoration: none; }
 a.btn:hover { text-decoration: none; text-shadow: none; }
 .btn.block { width: 100%; justify-content: center; padding: 12px; }
@@ -1499,3 +1499,295 @@ th.docker-sort:hover { color: var(--cyan); text-shadow: var(--glow-cyan); }
 /* 静态站点 zip 上传行：按钮 + 上传进度/文件名一行排布 */
 .px-zip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .px-zip .small { flex: 1 1 220px; }
+
+/* ============ 浅色主题覆盖块 ============
+   设计参照 https://blog.pi.mmxx.fun/ 的清爽浅底风格：以柔和浅灰蓝为底、
+   纯白卡片 + 轻投影、深 slate 正文，弱化霓虹发光与深色玻璃拟态。
+   深色仍是 :root 基线，此处仅在 html[data-theme="light"] 下按选择器覆写，
+   特异性高于基线规则；默认主题由 <head> 内联脚本设定为 light。 */
+html[data-theme="light"] {
+    color-scheme: light;
+
+    /* 底色与层次 */
+    --bg: #eaeef6;
+    --bg-2: #dfe6f3;
+    --panel: rgba(255, 255, 255, .82);
+    --panel-solid: #ffffff;
+    --panel-glass: rgba(120, 140, 200, .07);
+    --border: rgba(90, 110, 170, .22);
+    --border-strong: rgba(80, 100, 170, .42);
+    --text: #1c2338;
+    --muted: #59668a;
+
+    /* 霓虹色板：主色微调更适配浅底对比，语义色保持 */
+    --primary: #4c6bff;
+    --primary-dark: #3a57e6;
+
+    /* 渐变：保留品牌渐变，用于选中态/强调条 */
+    --grad-primary: linear-gradient(120deg, #38bdf8 0%, #4c6bff 55%, #7c5cff 100%);
+    /* 文字渐变：基线是浅霓虹（白字向），浅底不可读，改为深蓝紫粉深调 */
+    --grad-text: linear-gradient(90deg, #2563eb, #7c3aed 55%, #db2777);
+    --grad-neon: linear-gradient(120deg, #2563eb 0%, #7c3aed 55%, #db2777 100%);
+
+    /* 圆角 / 阴影 / 发光：以轻投影替代霓虹发光 */
+    --shadow: 0 8px 24px rgba(60, 80, 140, .12);
+    --glow-cyan: 0 2px 8px rgba(56, 130, 246, .18);
+    --glow-purple: 0 2px 8px rgba(124, 92, 255, .16);
+    --glow-soft: 0 8px 22px rgba(90, 110, 180, .18);
+
+    /* 代码块 / 柔和错误提示底色 */
+    --code-bg: rgba(240, 244, 252, .92);
+    --err-soft-bg: rgba(220, 38, 38, .07);
+    --err-soft-border: rgba(220, 38, 38, .3);
+}
+
+/* ---------- 背景层：柔和浅渐变 + 淡网格 ---------- */
+html[data-theme="light"] body::before {
+    background:
+        radial-gradient(40% 46% at 15% 18%, rgba(76, 107, 255, .10), transparent 60%),
+        radial-gradient(42% 50% at 85% 14%, rgba(56, 189, 248, .10), transparent 62%),
+        radial-gradient(46% 52% at 72% 86%, rgba(124, 92, 255, .08), transparent 60%),
+        linear-gradient(160deg, var(--bg-2), var(--bg));
+    filter: none;
+    animation: none;
+}
+html[data-theme="light"] body::after {
+    background-image:
+        linear-gradient(rgba(90, 110, 170, .05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(90, 110, 170, .05) 1px, transparent 1px);
+}
+
+/* ---------- 滚动条：主色淡描边 ---------- */
+html[data-theme="light"] { scrollbar-color: rgba(90, 110, 170, .4) transparent; }
+html[data-theme="light"] ::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, #6d8bff, #7c5cff);
+    background-clip: padding-box;
+}
+html[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #4c6bff, #6a4fe6); background-clip: padding-box; }
+
+/* ---------- 登录页 ---------- */
+html[data-theme="light"] .login-wrap::before {
+    background: radial-gradient(circle, rgba(76, 107, 255, .12), transparent 66%);
+}
+html[data-theme="light"] .login-card {
+    background: rgba(255, 255, 255, .82);
+    border-color: var(--border-strong);
+    box-shadow: 0 20px 50px rgba(60, 80, 140, .18), var(--glow-soft);
+}
+html[data-theme="light"] .login-card input {
+    background: #fff;
+    color: var(--text);
+}
+html[data-theme="light"] .login-card input::placeholder { color: var(--muted); }
+
+/* ---------- 侧栏 / 导航 ---------- */
+html[data-theme="light"] .sidebar {
+    background: rgba(255, 255, 255, .72);
+    color: var(--muted);
+    box-shadow: 4px 0 24px rgba(60, 80, 140, .08);
+}
+html[data-theme="light"] .nav-item { color: #3a476a; }
+html[data-theme="light"] .nav-item:hover {
+    background: rgba(76, 107, 255, .1);
+    color: #10182e;
+}
+/* 选中态：保持品牌渐变，白字在浅底渐变上对比足够 */
+html[data-theme="light"] .nav-item.active {
+    color: #fff;
+    box-shadow: 0 6px 18px rgba(76, 107, 255, .28);
+}
+html[data-theme="light"] .nav-item.active::before { background: #2563eb; box-shadow: none; }
+
+/* ---------- 顶栏 ---------- */
+html[data-theme="light"] .topbar {
+    background: rgba(255, 255, 255, .66);
+    box-shadow: 0 4px 20px rgba(60, 80, 140, .06);
+}
+
+/* ---------- 顶栏监控 ---------- */
+html[data-theme="light"] .metric-value { color: #1c2338; }
+html[data-theme="light"] .metric-bar { background: rgba(60, 80, 140, .12); box-shadow: none; }
+html[data-theme="light"] .metric-bar i { box-shadow: none; }
+
+/* ---------- 提示条 / 链接 ---------- */
+html[data-theme="light"] .tip {
+    background: rgba(56, 130, 246, .08);
+    border-color: rgba(56, 130, 246, .28);
+    color: #234a86;
+    box-shadow: none;
+}
+html[data-theme="light"] a, html[data-theme="light"] .tip a {
+    color: #2563eb;
+    text-decoration-color: rgba(37, 99, 235, .4);
+}
+html[data-theme="light"] a:visited, html[data-theme="light"] .tip a:visited { color: #2563eb; }
+html[data-theme="light"] a:hover, html[data-theme="light"] .tip a:hover {
+    color: #1d4ed8;
+    text-shadow: none;
+}
+
+/* ---------- 表格 ---------- */
+html[data-theme="light"] th {
+    color: #3a4a6b;
+    background: linear-gradient(180deg, rgba(76, 107, 255, .08), rgba(76, 107, 255, .02));
+}
+html[data-theme="light"] tr:hover td { background: rgba(76, 107, 255, .07); }
+
+/* ---------- 状态徽标：文字改深以保证浅底可读 ---------- */
+html[data-theme="light"] .badge.ok { background: rgba(16, 185, 129, .12); color: #0f8a5f; border-color: rgba(16, 185, 129, .34); box-shadow: none; }
+html[data-theme="light"] .badge.err { background: rgba(239, 68, 68, .1); color: #cf2f43; border-color: rgba(239, 68, 68, .32); box-shadow: none; }
+html[data-theme="light"] .badge.warn { background: rgba(245, 158, 11, .14); color: #b45309; border-color: rgba(245, 158, 11, .34); box-shadow: none; }
+html[data-theme="light"] .badge.info { background: rgba(56, 130, 246, .12); color: #1d6fd6; border-color: rgba(56, 130, 246, .32); box-shadow: none; }
+html[data-theme="light"] .badge.gray { background: rgba(100, 116, 139, .12); color: #59668a; border-color: rgba(100, 116, 139, .28); }
+html[data-theme="light"] .badge::before { box-shadow: none; }
+
+/* ---------- 开关 ---------- */
+html[data-theme="light"] .switch .slider { background: rgba(60, 80, 140, .18); border-color: var(--border); }
+html[data-theme="light"] .switch .slider:before { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .25); }
+html[data-theme="light"] .switch input:checked + .slider { box-shadow: none; }
+html[data-theme="light"] .switch input:checked + .slider:before { box-shadow: 0 1px 3px rgba(0, 0, 0, .3); }
+
+/* ---------- 表单控件：纯白底 + 深字 ---------- */
+html[data-theme="light"] :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea) {
+    background: #fff;
+    color: var(--text);
+}
+html[data-theme="light"] :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea)::placeholder { color: rgba(89, 102, 138, .8); }
+html[data-theme="light"] :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea):focus {
+    background: #fff;
+    box-shadow: 0 0 0 3px rgba(56, 130, 246, .16);
+}
+html[data-theme="light"] :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea):disabled {
+    background: rgba(60, 80, 140, .06);
+    color: var(--muted);
+}
+html[data-theme="light"] select option { background: #fff; color: var(--text); }
+
+/* ---------- 行内代码 ---------- */
+html[data-theme="light"] code {
+    background: rgba(37, 99, 235, .08);
+    border-color: rgba(37, 99, 235, .22);
+    color: #1d4ed8;
+}
+
+/* ---------- STUN 表单分区 / 勾选列表 / Webhook 行 ---------- */
+html[data-theme="light"] .field.form-section { background: rgba(240, 244, 252, .6); }
+html[data-theme="light"] .field.form-section > label { color: #16203a; }
+html[data-theme="light"] .field.form-section .sec-opt { color: #1d6fd6; background: rgba(56, 130, 246, .1); border-color: rgba(56, 130, 246, .26); }
+html[data-theme="light"] .pick-list .pick-row:hover { background: rgba(76, 107, 255, .07); }
+html[data-theme="light"] .pick-name { color: #16203a; }
+html[data-theme="light"] .pick-list .pick-row:has(> input:checked) {
+    border-color: rgba(37, 99, 235, .4);
+    background: rgba(56, 130, 246, .07);
+    box-shadow: inset 2px 0 0 #2563eb;
+}
+html[data-theme="light"] .pick-tag { background: rgba(100, 116, 139, .1); color: var(--muted); }
+html[data-theme="light"] .pick-tag.err { background: rgba(239, 68, 68, .1); color: #cf2f43; border-color: rgba(239, 68, 68, .3); }
+html[data-theme="light"] .pick-empty { background: rgba(60, 80, 140, .04); }
+
+/* ---------- 模态框 / 确认弹窗 / Toast：浅底卡片 ---------- */
+html[data-theme="light"] .modal-mask { background: rgba(30, 41, 59, .38); }
+html[data-theme="light"] .modal {
+    background: #fff;
+    border-color: var(--border-strong);
+    box-shadow: 0 24px 60px rgba(30, 41, 59, .28);
+}
+html[data-theme="light"] .modal-head { background: linear-gradient(90deg, rgba(76, 107, 255, .08), transparent); }
+html[data-theme="light"] .confirm-mask { background: rgba(30, 41, 59, .38); }
+html[data-theme="light"] .confirm-box {
+    background: #fff;
+    border-color: var(--border-strong);
+    box-shadow: 0 24px 60px rgba(30, 41, 59, .28);
+}
+html[data-theme="light"] .confirm-icon { background: rgba(76, 107, 255, .12); box-shadow: none; }
+html[data-theme="light"] .confirm-box.danger .confirm-icon { background: rgba(239, 68, 68, .12); box-shadow: none; }
+html[data-theme="light"] .confirm-title { color: #16203a; }
+html[data-theme="light"] .toast {
+    background: rgba(255, 255, 255, .96);
+    color: #16203a;
+    border-color: var(--border-strong);
+    box-shadow: 0 10px 30px rgba(30, 41, 59, .2);
+}
+html[data-theme="light"] .toast.err { color: #b91c1c; border-color: rgba(239, 68, 68, .4); box-shadow: 0 10px 30px rgba(30, 41, 59, .2); }
+html[data-theme="light"] .toast.ok { color: #0f8a5f; border-color: rgba(16, 185, 129, .4); box-shadow: 0 10px 30px rgba(30, 41, 59, .2); }
+
+/* ---------- 导航首页：磁贴墙浅玻璃化 ---------- */
+html[data-theme="light"] .nav-page::before { filter: blur(14px) saturate(1.05) brightness(.98); }
+html[data-theme="light"] .nav-tile {
+    background: rgba(255, 255, 255, .72);
+    border-color: var(--border);
+    box-shadow: 0 4px 16px rgba(60, 80, 140, .1);
+}
+html[data-theme="light"] .nav-tile::after { background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .5), transparent); }
+html[data-theme="light"] .nav-tile:hover {
+    background: rgba(255, 255, 255, .92);
+    box-shadow: 0 14px 32px rgba(60, 80, 140, .18);
+}
+html[data-theme="light"] .nav-tile:hover .tile-name { color: #10182e; text-shadow: none; }
+/* 有背景图时磁贴名改回深字（浅底卡片），除非图片很深——保守保持白字阴影可读 */
+html[data-theme="light"] .nav-page.has-bg .tile-name { color: #10182e; text-shadow: 0 1px 6px rgba(255, 255, 255, .6); }
+/* 图标底托：白底板在浅卡上改为淡描边浅底，避免与卡片融为一体或刺眼 */
+html[data-theme="light"] .tile-icon.is-auto { background: rgba(76, 107, 255, .08); border-color: rgba(76, 107, 255, .18); }
+html[data-theme="light"] .tile-icon.is-emoji { background: rgba(76, 107, 255, .08); border-color: rgba(76, 107, 255, .18); }
+
+/* ---------- 图片管理 / 图标预览 ---------- */
+html[data-theme="light"] .img-thumb { background: rgba(60, 80, 140, .06); }
+html[data-theme="light"] .img-preview-wrap { background: rgba(60, 80, 140, .06); }
+html[data-theme="light"] .icon-preview { background: rgba(76, 107, 255, .1); }
+
+/* ---------- 日志行着色 ---------- */
+html[data-theme="light"] .log-row-error td { color: #cf2f43; }
+html[data-theme="light"] .log-row-warn td { color: #b45309; }
+
+/* ---------- 内存诊断图表 ---------- */
+html[data-theme="light"] .diag-track { background: rgba(60, 80, 140, .12); }
+html[data-theme="light"] .diag-val { color: #16203a; }
+html[data-theme="light"] .diag-svg { background: rgba(60, 80, 140, .04); }
+html[data-theme="light"] .diag-grid { stroke: rgba(60, 80, 140, .14); }
+html[data-theme="light"] .diag-crosshair { background: rgba(30, 41, 59, .35); }
+html[data-theme="light"] .diag-tip { background: #fff; color: #16203a; box-shadow: 0 6px 18px rgba(30, 41, 59, .18); }
+
+/* ---------- Docker 模块 ---------- */
+html[data-theme="light"] .docker-stat .v { color: #16203a; }
+html[data-theme="light"] .docker-stat:hover { box-shadow: 0 12px 28px rgba(60, 80, 140, .14); }
+html[data-theme="light"] .docker-mem-bar { background: rgba(60, 80, 140, .12); }
+html[data-theme="light"] .docker-mem-bar i { box-shadow: none; }
+html[data-theme="light"] .docker-mono { color: #1d4ed8; }
+html[data-theme="light"] .modal h4 { color: #3a4a6b; }
+
+/* ---------- 统一状态仪表盘（总览） ---------- */
+html[data-theme="light"] .dash-stat .v { color: #16203a; }
+html[data-theme="light"] .dash-stat:hover { box-shadow: 0 12px 28px rgba(60, 80, 140, .14); }
+html[data-theme="light"] .dash-visit-sub { color: #3a4a6b; }
+html[data-theme="light"] .dash-top-rank { background: rgba(76, 107, 255, .12); color: #3a57e6; }
+html[data-theme="light"] .dash-top-item:nth-child(1) .dash-top-rank { background: rgba(16, 185, 129, .14); color: #0f8a5f; }
+html[data-theme="light"] .dash-top-bar { background: rgba(60, 80, 140, .1); }
+html[data-theme="light"] .dash-top-bar i { box-shadow: none; }
+html[data-theme="light"] .dash-speed-tile { background: rgba(76, 107, 255, .05); }
+html[data-theme="light"] .dash-speed-tile .v { color: #16203a; }
+html[data-theme="light"] .st-prog-step.cur { color: #16203a; box-shadow: var(--glow-cyan); }
+html[data-theme="light"] .st-prog-step.done { color: #0f8a5f; }
+html[data-theme="light"] .st-prog-bar { background: rgba(60, 80, 140, .1); }
+html[data-theme="light"] .st-prog-bar i { box-shadow: none; }
+
+/* ---------- STUN 流量折线图 ---------- */
+html[data-theme="light"] .tf-head { color: #16203a; }
+html[data-theme="light"] .tf-dot { box-shadow: none; }
+html[data-theme="light"] .tf-tip { background: #fff; color: #16203a; box-shadow: 0 6px 18px rgba(30, 41, 59, .18); }
+
+/* ---------- 分段切换控件 ---------- */
+html[data-theme="light"] .seg-btn:hover { color: #10182e; background: rgba(76, 107, 255, .1); }
+
+/* ---------- 普通按钮悬停：基线把文字提白（白字向）会隐入浅底，改为深字 ---------- */
+html[data-theme="light"] .btn:hover { color: #10182e; box-shadow: 0 0 12px rgba(37, 99, 235, .18); }
+html[data-theme="light"] .btn:hover::after { background: linear-gradient(100deg, transparent, rgba(76, 107, 255, .18), transparent); }
+html[data-theme="light"] .btn.danger:hover { color: #cf2f43; background: rgba(239, 68, 68, .1); box-shadow: 0 0 12px rgba(239, 68, 68, .2); }
+html[data-theme="light"] .btn.success:hover { color: #0f8a5f; background: rgba(16, 185, 129, .1); box-shadow: 0 0 12px rgba(16, 185, 129, .2); }
+/* 主色按钮（渐变底）保持白字 */
+html[data-theme="light"] .btn.primary:hover { color: #fff; }
+
+/* ---------- 通用面板顶部高光抑制 ---------- */
+html[data-theme="light"] .panel::before {
+    background: linear-gradient(90deg, transparent, rgba(90, 110, 170, .3), transparent);
+}
+

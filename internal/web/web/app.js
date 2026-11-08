@@ -210,6 +210,33 @@ $('#btnLogout').addEventListener('click', async () => {
     showLogin();
 });
 
+/* ---------------- 主题切换（浅色/深色，默认浅色） ----------------
+   主题属性 data-theme 由 <head> 内联脚本在首屏渲染前设定（避免闪屏），
+   本段仅负责按钮文案同步与切换持久化；具体配色全部在 style.css 的
+   html[data-theme="light"] 覆盖块里，无需在此改动样式。 */
+const THEME_KEY = 'nx_theme';
+
+/** 当前生效主题：非 dark 一律视为 light（与内联初始化默认值一致） */
+function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+}
+
+/** 同步切换按钮文案：浅色下提示切到深色，反之提示切回浅色 */
+function updateThemeBtn() {
+    const btn = $('#btnTheme');
+    if (btn) btn.textContent = currentTheme() === 'dark' ? '☀️ 浅色' : '🌙 深色';
+}
+
+function setTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* 隐私模式等存储不可用时忽略 */ }
+    updateThemeBtn();
+}
+
+const btnTheme = $('#btnTheme');
+if (btnTheme) btnTheme.addEventListener('click', () => setTheme(currentTheme() === 'dark' ? 'light' : 'dark'));
+updateThemeBtn();
+
 $('#modalClose').addEventListener('click', closeModal);
 
 async function loadSysInfo() {

@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NexHome 联枢 · 内网节点守护工具</title>
     <link rel="stylesheet" href="style.css">
+    <script>
+        /* 主题初始化：在首屏渲染前确定主题，避免浅色/深色闪屏。默认浅色，用户偏好持久化到 localStorage */
+        (function () {
+            try {
+                var t = localStorage.getItem('nx_theme');
+                if (t !== 'dark' && t !== 'light') t = 'light';
+                document.documentElement.setAttribute('data-theme', t);
+            } catch (e) {
+                document.documentElement.setAttribute('data-theme', 'light');
+            }
+        })();
+    </script>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
 </head>
 <body>
@@ -18,7 +30,7 @@
             <input type="password" id="loginPwd" placeholder="请输入登录密码" autocomplete="current-password" required>
             <button type="submit" class="btn primary block">登 录</button>
         </form>
-        <p class="muted small">首次使用默认密码查看控制台 · <a href="docs.html" target="_blank" rel="noopener">使用文档</a></p>
+        <p class="muted small">首次使用默认密码查看控制台</p>
     </div>
 </div>
 
@@ -51,8 +63,8 @@
             <!-- 顶栏系统资源监控（CPU / 内存 / 虚拟内存），由 app.js 每 5 秒刷新 -->
             <div id="sysMetrics" class="sys-metrics"></div>
             <div class="topbar-actions">
-                <!-- 使用文档随系统打包部署（web/docs.html），相对路径以兼容安全入口前缀模式 -->
-                <a class="btn small" id="btnDocs" href="docs.html" target="_blank" rel="noopener">📖 使用文档</a>
+                <!-- 主题切换：浅色/深色双主题，默认浅色，偏好存 localStorage（app.js 驱动） -->
+                <button class="btn small" id="btnTheme" title="切换浅色/深色主题">🌙 深色</button>
                 <button class="btn ghost small" id="btnLogout">退出登录</button>
             </div>
         </header>
