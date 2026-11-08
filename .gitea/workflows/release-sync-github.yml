@@ -6,6 +6,9 @@
 #     但 Gitea 的 Release（标题、正文、附件）不随镜像同步过去，
 #     本工作流负责补齐 Release 这一层
 #   - 与 .gitea/workflows/docker-image.yml 互不影响，可同时触发
+#   - Release 里的二进制附件由 .gitea/workflows/release-build.yml 编译后挂到
+#     Gitea Release，两个工作流同由 release 事件触发、并行执行，因此本工作流
+#     在自动触发时会先等那几个附件就绪（见下面「1.5 等待二进制构建附件」）
 #   - 本目录（.gitea/workflows）会被镜像带到 GitHub，但 GitHub 只解析
 #     .github/workflows，因此不会在 GitHub 侧重复执行本工作流
 #
@@ -35,7 +38,7 @@
 #   - API_TOKEN_GITHUB  GitHub 凭据：Fine-grained PAT，对目标仓库授予
 #                        Contents: Read and write
 #                        配置位置：组织/仓库 Settings -> Actions -> Secrets
-#   - GITEA_API_TOKEN   Gitea 凭据：用户或组织 Token，仓库只读权限即可
+#   - API_TOKEN_GITEA   Gitea 凭据：用户或组织 Token，仓库只读权限即可
 #                        （Release 为公开仓库时可留空，回退用 Actions 内置 token）
 #   两者都写成 `secrets.X || vars.X`：Secret 优先（日志中会掩码，推荐），
 #   实例级全局变量也能用（Gitea 仅支持全局 variables、不支持全局 secrets，
@@ -48,6 +51,11 @@
 #                           使用 API 反代时需一并改为对应的上传域名）
 #       GITEA_API_BASE      Gitea API 地址（默认由内置 GITHUB_SERVER_URL 推导，
 #                           runner 需走内网地址访问 Gitea 时显式指定）
+#       SYNC_ASSET_WAIT_SECONDS  自动触发时等待二进制附件就绪的秒数
+#                           （默认 1800；0 = 不等附件，立刻同步）
+#       SYNC_EXPECT_ASSETS  等待哪些附件名（空格分隔，留空 = release-build.yml
+#                           产出的 4 个二进制；填 none 或某版本不需要二进制时，
+#                           直接把 SYNC_ASSET_WAIT_SECONDS 设为 0）
 #
 # 运行环境：容器内需有 curl 与 jq，缺失时本工作流自动安装
 #          （兼容 apt / apk / dnf / microdnf / yum）。
@@ -94,7 +102,8 @@ jobs:
     # 沿用 docker-image.yml 的同一批 runner；本任务只调用 API + curl，
     # 不需要 Docker，任何带 bash 的镜像均可运行
     runs-on: golang
-    timeout-minutes: 20
+    # 上限要覆盖「等 release-build 产出附件」（默认 1800s）+ 实际同步耗时
+    timeout-minutes: 45
     steps:
       - name: 准备 curl 与 jq
         shell: bash
@@ -134,8 +143,11 @@ jobs:
           # 凭据：Secret 优先，回退实例级全局变量；
           # Gitea Token 再兜底一层 Actions 内置 token（公开仓库够用）
           GH_TOKEN: ${{ secrets.API_TOKEN_GITHUB || vars.API_TOKEN_GITHUB }}
-          GITEA_TOKEN_CFG: ${{ secrets.GITEA_API_TOKEN || vars.GITEA_API_TOKEN }}
+          GITEA_TOKEN_CFG: ${{ secrets.API_TOKEN_GITEA || vars.API_TOKEN_GITEA }}
           GITEA_TOKEN_BUILTIN: ${{ secrets.GITHUB_TOKEN }}
+          # 二进制附件等待策略（由 release-build.yml 产出，见下面 1.5）
+          SYNC_WAIT_SECONDS: ${{ vars.SYNC_ASSET_WAIT_SECONDS }}
+          SYNC_EXPECT_ASSETS: ${{ vars.SYNC_EXPECT_ASSETS }}
         run: |
           set -euo pipefail
           TMP="$(mktemp -d)"
@@ -154,7 +166,7 @@ jobs:
           [[ -n "${GH_TOKEN:-}" ]] \
             || err "未配置 GitHub 凭据：请在 Gitea 的 Actions Secrets 中新增 API_TOKEN_GITHUB（GitHub Fine-grained PAT，Contents 读写）"
           [[ -n "$GITEA_TOKEN" ]] \
-            || err "未配置 Gitea 凭据：请新增 GITEA_API_TOKEN（Token 权限：仓库只读）"
+            || err "未配置 Gitea 凭据：请新增 API_TOKEN_GITEA（Token 权限：仓库只读）"
 
           # 请求头数组：GitHub 用 Bearer，Gitea 用 token
           GH_HDR=(-H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json")
@@ -216,6 +228,51 @@ jobs:
             FORCE_UPDATE="true"
           fi
           echo "GitHub 已存在同名 Release 时覆盖：$FORCE_UPDATE"
+
+          # ---------- 1.5 等待二进制构建附件（仅自动触发时） ----------
+          # 附件由 release-build.yml 编译后挂到 Gitea Release，与本工作流并行执行；
+          # 不等的话本工作流会抢在附件产出之前把「没有附件的 Release」同步到 GitHub，
+          # 之后再没有谁补传（除非手动重跑）。
+          # 等满上限仍未齐（多为构建失败）→ 记 warning 后继续同步已有内容，
+          # 至少把标题/正文送出去，修好构建后手动重跑本工作流即可补齐附件。
+          # 手动触发不等：多为补历史版本，附件那时已就绪或本就不需要。
+          WAIT_TOTAL="${SYNC_WAIT_SECONDS:-1800}"
+          [[ "$WAIT_TOTAL" =~ ^[0-9]+$ ]] \
+            || err "SYNC_ASSET_WAIT_SECONDS 只能是非负整数（秒），当前为：$WAIT_TOTAL"
+          # Gitea 未设置的 vars 会传成空串，故用 :- 回退默认列表；
+          # 某版本确实不需要二进制时，把 SYNC_ASSET_WAIT_SECONDS 设为 0 即可立刻同步
+          EXPECT="${SYNC_EXPECT_ASSETS:-nexhome-amd64.exe nexhome-arm64.exe nexhome-amd64 nexhome-arm64}"
+          if [[ "$EXPECT" == "none" ]]; then EXPECT=""; fi
+          if [[ "$EVENT_NAME" == "release" && "$WAIT_TOTAL" != "0" && -n "$EXPECT" ]]; then
+            echo "等待二进制附件就绪（上限 ${WAIT_TOTAL}s）：$EXPECT"
+            waited=0
+            while :; do
+              missing=""
+              code=$(http "$TMP/wait.json" GET "$GITEA_API/repos/$GITEA_REPO/releases/tags/$TAG" "${GT_HDR[@]}")
+              if [[ "$code" != "200" ]]; then
+                # 连 Release 都读不到：下面第 2 步会给出正式报错，这里先按「未就绪」轮询
+                missing="（读取失败 HTTP $code）"
+              else
+                for n in $EXPECT; do
+                  if [[ "$(jq -r --arg n "$n" '[(.assets // [])[] | select(.name == $n)] | length' "$TMP/wait.json")" == "0" ]]; then
+                    missing="$missing $n"
+                  fi
+                done
+              fi
+              if [[ -z "$missing" ]]; then
+                echo "二进制附件已就绪，开始同步"
+                break
+              fi
+              if [[ "$waited" -ge "$WAIT_TOTAL" ]]; then
+                echo "::warning::等待 ${WAIT_TOTAL}s 后附件仍未齐（缺：${missing# }），继续同步已有内容"
+                break
+              fi
+              echo "附件未齐（缺：${missing# }），已等待 ${waited}s，15s 后重查"
+              sleep 15
+              waited=$((waited + 15))
+            done
+            rm -f "$TMP/wait.json"
+          fi
 
           # ---------- 2. 读取 Gitea Release 元数据 ----------
           code=$(http "$TMP/gitea.json" GET "$GITEA_API/repos/$GITEA_REPO/releases/tags/$TAG" "${GT_HDR[@]}")

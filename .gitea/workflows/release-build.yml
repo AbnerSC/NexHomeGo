@@ -1,0 +1,441 @@
+# =====================================================================
+# Gitea Actions：发布版本时交叉编译二进制产物，并挂到 Gitea Release 附件
+#
+# 产物（4 个，文件名固定，即 Release 附件名）：
+#   nexhome-amd64.exe   nexhome-arm64.exe   nexhome-amd64   nexhome-arm64
+#
+# 与 .gitea/workflows/release-sync-github.yml 的配合（谁负责什么）：
+#   - 本工作流只写 Gitea：编译产物作为附件挂到本次 Release，不直接访问 GitHub
+#   - GitHub 侧由 release-sync-github.yml 负责同步。两个工作流都由
+#     release: published 触发、并行执行，故 sync 那侧会先等本工作流产出的
+#     4 个附件就绪再同步（等待逻辑见该文件的「1.5 等待二进制附件」），
+#     正常发版无需人工干预
+#   - 相关可调变量（配在 Gitea 侧，本文件不需要改）：
+#       SYNC_ASSET_WAIT_SECONDS  sync 等待附件的秒数（默认 1800，0 = 不等）
+#       SYNC_EXPECT_ASSETS       sync 期望等到哪几个附件（留空 = 上面 4 个文件名；
+#                                某版本不需要二进制时填 none，或把等待秒数设为 0）
+#   - 本工作流任一目标编译失败则整体失败且不上传任何附件，
+#     避免出现「有 amd64、缺 arm64」的半套版本；
+#     修好之后手动重跑本工作流，再手动重跑 sync 即可补齐
+#
+# CGO 与交叉工具链（重要，动手前先看这段）：
+#   项目依赖 mattn/go-sqlite3（内嵌 SQLite 的 C 源码，与 Java 侧共用数据文件，
+#   Dockerfile 同样 CGO_ENABLED=1），因此交叉编译必须为每个目标准备对应的
+#   C 编译器，本工作流按下面的顺序自动选择：
+#     linux/amd64    runner 宿主为 x86_64 时直接用镜像自带 cc，否则回退 Zig
+#     linux/arm64    apt 的 gcc-aarch64-linux-gnu，装不上时回退 Zig
+#     windows/amd64  apt 的 gcc-mingw-w64-x86-64，装不上时回退 Zig
+#     windows/arm64  Zig（zig cc -target aarch64-windows-gnu）
+#                    Debian 全系（bookworm/trixie/sid）都没有打包 aarch64 的
+#                    MinGW-w64 交叉编译器（只有 i686/x86-64/ucrt64），所以这个
+#                    目标只能走 Zig —— 与 Gitea 官方「源码安装」文档用
+#                    zig cc 做 cgo 交叉编译的做法一致
+#   Zig 获取顺序：runner 镜像已装 → apt 里有 zig 包 → 下载压缩包到临时目录，
+#   默认地址 https://ziglang.org/download/<ZIG_VERSION>/zig-<宿主架构>-linux-<ZIG_VERSION>.tar.xz，
+#   国内 runner 直连 ziglang.org 困难时，把 ZIG_ARCHIVE_URL 指向镜像站
+#   或 Nexus 上托管的同一个 tar.xz
+#   注：走 Zig 编 linux/arm64 时，链接的是 Zig 自带的 glibc 基线，
+#   而 apt 交叉编译器与 Docker 镜像同为 bookworm 基线；两者产物都依赖
+#   较新的 glibc，老旧 ARM 设备若报 glibc 版本不足，请优先保证 apt 工具链装得上
+#
+# 触发方式：
+#   1) 自动：在 Gitea 发布版本（release 事件 published）后编译并挂附件
+#   2) 手动：Actions 页面 Run workflow，Tag 支持 `1.2.3` 或 `release-v1.2.3`，
+#      留空则取最新发布版本；已有同名附件时默认删除重传（force_reupload=false 跳过）
+#   注意：事件触发只会使用 tag 所在提交上的工作流文件，
+#   本文件合入之前发布的版本不会自动触发，需手动运行补产物
+#
+# 前置条件（凭据一律配在 Gitea 侧，不要写进本文件）：
+#   - API_TOKEN_GITEA  Gitea Token：需要「内容写入（Contents: Write）」权限
+#                      （上传 Release 附件属写操作；与 sync 工作流共用同一变量名，
+#                      sync 只读即可，但本工作流必须给到读写）
+#                      配置位置：组织/仓库 Settings -> Actions -> Secrets
+#                      写成 `secrets.X || vars.X`：Secret 优先（日志掩码），
+#                      实例级全局变量兜底（本实例所有仓库可见、日志不掩码）
+#   - 可选全局变量（不配则用下面 env 的默认值）：
+#       GOPROXY_URL        Go 模块代理（与 docker-image.yml 共用；留空走官方代理）
+#       APT_MIRROR         runner 容器内的 apt 镜像源域名（留空不动镜像里的源）
+#       GITEA_API_BASE     Gitea API 地址（留空由内置 GITHUB_SERVER_URL 推导）
+#       ZIG_VERSION        Zig 版本（默认 0.17.1）
+#       ZIG_ARCHIVE_URL    Zig 压缩包完整下载地址（优先于上面的拼接结果）
+#   - runner：沿用 runs-on: golang，需 Debian 系镜像（含 apt）且有 go 命令，
+#     与 docker-image.yml 用同一批 act_runner 即可
+#
+# 故障排查：
+#   - 上传附件返回 422 / "exceeds maximum allowed size"：产物是含 SQLite C 源码
+#     + 内嵌前端/xdb 的单文件（stripped 约 60MB），超过 Gitea 默认的
+#     [attachment] MAX_FILE_SIZE = 50MiB；需在 app.ini 调大后重启 Gitea
+#   - windows/arm64 报 "Zig 下载失败"：配 ZIG_ARCHIVE_URL 指向可达的镜像地址
+#   - 目标编译报 "aarch64-linux-gnu-gcc: executable file not found"：apt 源里没有
+#     交叉编译包且 Zig 也没装上，看「安装交叉编译工具链」这步的输出即可定位
+#   - 产物在老旧 ARM 设备上报 glibc 版本不足：见上面「CGO 与交叉工具链」末尾说明
+# =====================================================================
+name: 二进制产物构建发布（Release Binaries）
+
+on:
+  # 发布版本时自动编译并挂附件（Gitea 发布 Release 会同时产生 release-vX.Y.Z tag）
+  release:
+    types:
+      - published
+  # 手动补产物：历史版本、失败重试、重新上传
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建并上传附件的版本（1.2.3 或 release-v1.2.3；留空 = 最新发布版本）'
+        required: false
+        default: ''
+      force_reupload:
+        description: 'Gitea Release 上已有同名附件时是否删除重传（true/false）'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+
+concurrency:
+  # 同一版本的构建串行执行，避免手动重跑与自动触发互相覆盖附件
+  group: release-build-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  # 以下均为 Gitea 侧全局变量，换环境只改配置、不改本文件
+  GOPROXY_URL: ${{ vars.GOPROXY_URL }}
+  APT_MIRROR: ${{ vars.APT_MIRROR }}
+  GITEA_API_BASE: ${{ vars.GITEA_API_BASE }}
+  ZIG_VERSION: ${{ vars.ZIG_VERSION || '0.17.1' }}
+  ZIG_ARCHIVE_URL: ${{ vars.ZIG_ARCHIVE_URL }}
+
+jobs:
+  build-binaries:
+    name: 交叉编译并上传 Release 附件
+    runs-on: golang
+    # 四个目标串行编译，其中两个是 CGO 交叉编译 + QEMU 无关，但 apt 装工具链
+    # 与 SQLite amalgamation 编译都比较耗时，留足余量
+    timeout-minutes: 60
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装交叉编译工具链
+        shell: bash
+        run: |
+          set -euo pipefail
+          command -v go >/dev/null 2>&1 \
+            || { echo "::error::runner 镜像内没有 go 命令，runs-on 标签需指向带 Go 的镜像（如 golang:*-bookworm）"; exit 1; }
+          command -v apt-get >/dev/null 2>&1 \
+            || { echo "::error::本工作流用 apt 安装交叉编译器，runner 镜像需为 Debian/Ubuntu 系"; exit 1; }
+
+          # 可选：给 runner 容器自身换 apt 源（变量为空则完全不动镜像里的配置）
+          if [[ -n "${APT_MIRROR:-}" ]]; then
+            for f in /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources; do
+              [[ -f "$f" ]] && sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" "$f" || true
+            done
+          fi
+
+          apt-get update -qq
+          # curl/jq：调用 Gitea API；file：校验产物架构；xz-utils：解包 Zig
+          apt-get install -y -qq --no-install-recommends curl ca-certificates jq file xz-utils
+
+          # linux/arm64 与 windows/amd64 的交叉编译器：仓库里有才装。
+          # 装不上不在这里失败，编译步骤会自动回退 Zig（换发行版/换镜像源时更稳）
+          for p in gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64; do
+            if apt-cache show "$p" >/dev/null 2>&1; then
+              apt-get install -y -qq --no-install-recommends "$p" \
+                || echo "::warning::安装 $p 失败，对应目标将回退 Zig"
+            else
+              echo "仓库中没有 $p 包，对应目标将回退 Zig"
+            fi
+          done
+
+          echo "Go 版本：$(go version)"
+          echo "宿主架构：$(uname -m)"
+          echo "宿主 C 编译器：$(gcc --version 2>/dev/null | head -n1 || echo '未检测到 gcc')"
+          echo "linux/arm64 交叉 gcc：$(command -v aarch64-linux-gnu-gcc || echo '无（回退 Zig）')"
+          echo "windows/amd64 mingw gcc：$(command -v x86_64-w64-mingw32-gcc || echo '无（回退 Zig）')"
+          echo "zig：$(command -v zig || echo '未安装（windows/arm64 需要时自动下载）')"
+
+      - name: 解析版本号
+        id: rel
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          GITEA_REPO: ${{ github.repository }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          # 仅「手动触发且未填 tag」时才会用到（取最新发布版本），只读权限足够
+          GITEA_TOKEN_CFG: ${{ secrets.API_TOKEN_GITEA || vars.API_TOKEN_GITEA }}
+          GITEA_TOKEN_BUILTIN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          err() { echo "::error::$1"; exit 1; }
+          GITEA_API="${GITEA_API_BASE:-${GITEA_SERVER_URL%/}/api/v1}"
+          GITEA_API="${GITEA_API%/}"
+          GITEA_TOKEN="${GITEA_TOKEN_CFG:-$GITEA_TOKEN_BUILTIN}"
+
+          if [[ "$EVENT_NAME" == "release" ]]; then
+            RAW_TAG="${EVENT_TAG:-}"
+            echo "触发方式：发布版本事件（自动构建）"
+          else
+            RAW_TAG="${INPUT_TAG:-}"
+            echo "触发方式：手动运行"
+          fi
+
+          if [[ -z "${RAW_TAG// }" ]]; then
+            [[ -n "$GITEA_TOKEN" ]] || err "未指定版本且未配置 API_TOKEN_GITEA，无法取最新发布版本"
+            code=$(curl -sS --retry 3 --retry-delay 2 -o /tmp/latest.json -w '%{http_code}' \
+                    -H "Authorization: token $GITEA_TOKEN" \
+                    "$GITEA_API/repos/$GITEA_REPO/releases/latest") \
+              || err "请求 Gitea 最新发布版本失败（网络错误）"
+            [[ "$code" == "200" ]] || err "获取 Gitea 最新发布版本失败（HTTP $code）：$(head -c 300 /tmp/latest.json | tr -d '\n')"
+            RAW_TAG=$(jq -r '.tag_name // ""' /tmp/latest.json)
+            echo "未指定版本，使用最新发布版本：$RAW_TAG"
+          fi
+
+          # 简写 X.Y.Z 自动补全为 release-vX.Y.Z（与 release-sync-github.yml 保持一致）
+          if [[ "$RAW_TAG" =~ ^v?[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            TAG="release-v${RAW_TAG#v}"
+          else
+            TAG="$RAW_TAG"
+          fi
+          [[ "$TAG" =~ ^release-v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || err "版本 tag 格式必须为 release-vX.Y.Z（手动触发也可简填 X.Y.Z），当前为：${TAG:-（空）}"
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#release-v}" >> "$GITHUB_OUTPUT"
+          echo "待构建版本：$TAG（注入 core.Version 的值：${TAG#release-v}）"
+          # 便于事后核对「这次产物到底是哪个提交编出来的」
+          echo "检出提交：$(git rev-parse HEAD)（${GITHUB_REF:-（未知 ref）}）"
+
+      - name: 交叉编译 4 个目标
+        id: build
+        shell: bash
+        env:
+          APP_VERSION: ${{ steps.rel.outputs.version }}
+        run: |
+          set -euo pipefail
+          err() { echo "::error::$1"; exit 1; }
+          OUT="dist"
+          mkdir -p "$OUT"
+          TOOLS="${RUNNER_TEMP:-/tmp}/nexhome-tools"
+          mkdir -p "$TOOLS"
+
+          # 产物注入版本号（与 Dockerfile 的 ldflags 约定一致：internal/core.Version）
+          LDFLAGS="-s -w"
+          [[ -n "${APP_VERSION:-}" ]] && LDFLAGS="$LDFLAGS -X 'NexHomeGo/internal/core.Version=$APP_VERSION'"
+          # 国内 runner 经 Nexus 模块代理拉依赖；为空则保持 Go 默认代理
+          [[ -n "${GOPROXY_URL:-}" ]] && export GOPROXY="$GOPROXY_URL"
+
+          # ---------- Zig 工具链准备（懒加载：只在真正需要时才装） ----------
+          # 注：ensure_zig / zig_cc 的返回值靠标准输出传递（$(...) 捕获），
+          # 所以日志一律走标准错误，否则提示文字会被拼进 CC 里
+          log() { echo "$@" >&2; }
+          ZIG_BIN=""
+          ensure_zig() {
+            [[ -n "$ZIG_BIN" ]] && return 0
+            if command -v zig >/dev/null 2>&1; then
+              ZIG_BIN="$(command -v zig)"
+              log "使用镜像自带的 zig：$("$ZIG_BIN" version)"
+              return 0
+            fi
+            if [[ -x "$TOOLS/zig/zig" ]]; then
+              ZIG_BIN="$TOOLS/zig/zig"
+              log "使用已下载的 zig：$("$ZIG_BIN" version)"
+              return 0
+            fi
+            # 先试 apt（Ubuntu / 新版 Debian 有 zig 包，bookworm 没有）
+            if apt-cache show zig >/dev/null 2>&1 \
+              && apt-get install -y -qq --no-install-recommends zig 2>/dev/null \
+              && command -v zig >/dev/null 2>&1; then
+              ZIG_BIN="$(command -v zig)"
+              log "使用 apt 安装的 zig：$("$ZIG_BIN" version)"
+              return 0
+            fi
+            local url
+            url="${ZIG_ARCHIVE_URL:-https://ziglang.org/download/${ZIG_VERSION}/zig-$(uname -m)-linux-${ZIG_VERSION}.tar.xz}"
+            log "下载 Zig 交叉工具链：$url"
+            curl -fsSL --retry 3 --retry-delay 5 -o "$TOOLS/zig.tar.xz" "$url" \
+              || err "下载 Zig 失败：$url（国内 runner 可配置全局变量 ZIG_ARCHIVE_URL 指向镜像站或 Nexus）"
+            mkdir -p "$TOOLS/zig-extract"
+            tar -xf "$TOOLS/zig.tar.xz" -C "$TOOLS/zig-extract" \
+              || err "解压 Zig 失败（请确认 runner 镜像有 tar+xz 支持）"
+            # 压缩包内是带版本号的目录（zig 与 lib 同级），必须留在原目录使用，不能只挑可执行文件
+            ZIG_BIN="$(find "$TOOLS/zig-extract" -maxdepth 2 -type f -name zig -print -quit)"
+            [[ -n "$ZIG_BIN" ]] || err "Zig 解压后未找到 zig 可执行文件"
+            log "已就绪 Zig：$("$ZIG_BIN" version)"
+          }
+          # zig cc 的目标三元组：aarch64-windows-gnu / x86_64-windows-gnu / aarch64-linux-gnu
+          zig_cc() { ensure_zig; echo "$ZIG_BIN cc -target $1"; }
+
+          # ---------- 每个目标选择 C 编译器 ----------
+          cc_for() {
+            local os="$1" arch="$2"
+            case "$os/$arch" in
+              linux/amd64)
+                # 宿主就是 x86_64 时用镜像自带 cc（与 Docker 编译阶段完全一致）
+                if [[ "$(uname -m)" == "x86_64" ]]; then echo ""; else zig_cc "x86_64-linux-gnu"; fi
+                ;;
+              linux/arm64)
+                if command -v aarch64-linux-gnu-gcc >/dev/null 2>&1; then
+                  echo "aarch64-linux-gnu-gcc"
+                else
+                  zig_cc "aarch64-linux-gnu"
+                fi
+                ;;
+              windows/amd64)
+                if command -v x86_64-w64-mingw32-gcc >/dev/null 2>&1; then
+                  echo "x86_64-w64-mingw32-gcc"
+                else
+                  zig_cc "x86_64-windows-gnu"
+                fi
+                ;;
+              windows/arm64)
+                # Debian 未打包 aarch64 的 MinGW-w64，固定走 Zig
+                zig_cc "aarch64-windows-gnu"
+                ;;
+              *) err "未预置的目标：$os/$arch" ;;
+            esac
+          }
+
+          # ---------- 逐个编译 ----------
+          # 顺序即产物文件名顺序：windows 带 .exe，linux 不带
+          TARGETS=("windows amd64" "windows arm64" "linux amd64" "linux arm64")
+          FAILED=()
+          BUILT=()
+          for t in "${TARGETS[@]}"; do
+            os="${t%% *}"
+            arch="${t##* }"
+            ext=""
+            [[ "$os" == "windows" ]] && ext=".exe"
+            name="nexhome-${arch}${ext}"
+            cc="$(cc_for "$os" "$arch")"
+            echo "==================================================================="
+            echo "编译 $os/$arch -> $name（CC=${cc:-镜像默认 cc}）"
+            echo "==================================================================="
+            env_args=(GOOS="$os" GOARCH="$arch" CGO_ENABLED=1)
+            [[ -n "$cc" ]] && env_args+=(CC="$cc")
+            # -trimpath 去本机路径；-buildvcs=false 避免 runner 检出状态下取 VCS 戳记失败
+            if env "${env_args[@]}" go build -trimpath -buildvcs=false -ldflags="$LDFLAGS" \
+                  -o "$OUT/$name" ./cmd/nexhome; then
+              if command -v file >/dev/null 2>&1; then
+                echo "产物校验：$(file -b "$OUT/$name")"
+              fi
+              echo "大小：$(wc -c < "$OUT/$name" | tr -d ' ') 字节"
+              BUILT+=("$name")
+            else
+              echo "::error::目标 $os/$arch（$name）编译失败"
+              FAILED+=("$name")
+            fi
+          done
+
+          if [[ "${#FAILED[@]}" -gt 0 ]]; then
+            # 不上传部分产物：半个版本的 Release 同步到 GitHub 更难排查
+            err "以下目标编译失败：${FAILED[*]}；本次不上传任何附件，修好后手动重跑本工作流"
+          fi
+          echo "built=${BUILT[*]}" >> "$GITHUB_OUTPUT"
+          echo "4 个目标全部编译完成：${BUILT[*]}"
+
+      - name: 上传附件到 Gitea Release
+        shell: bash
+        env:
+          TAG: ${{ steps.rel.outputs.tag }}
+          GITEA_REPO: ${{ github.repository }}
+          GITEA_SERVER_URL: ${{ github.server_url }}
+          # 上传附件是写操作，必须是「内容读写」权限的 Token（无回退到内置 token）
+          GITEA_TOKEN: ${{ secrets.API_TOKEN_GITEA || vars.API_TOKEN_GITEA }}
+          FORCE_REUPLOAD: ${{ github.event.inputs.force_reupload }}
+        run: |
+          set -euo pipefail
+          TMP="$(mktemp -d)"
+          trap 'rm -rf "$TMP"' EXIT
+
+          err() { echo "::error::$1"; exit 1; }
+          GITEA_API="${GITEA_API_BASE:-${GITEA_SERVER_URL%/}/api/v1}"
+          GITEA_API="${GITEA_API%/}"
+          [[ -n "${GITEA_TOKEN:-}" ]] \
+            || err "未配置 API_TOKEN_GITEA：上传 Release 附件需要「内容读写」权限的 Gitea Token（配到 Settings -> Actions -> Secrets）"
+          # 自动触发（release 事件）没有 inputs，同名附件一律删除重传，保证重跑幂等
+          FORCE="${FORCE_REUPLOAD:-true}"
+          [[ "$FORCE" == "true" || "$FORCE" == "false" ]] || err "force_reupload 只能填 true 或 false，当前为：$FORCE"
+
+          GT_HDR=(-H "Authorization: token $GITEA_TOKEN")
+          # http <输出文件> <方法> <URL> [curl 额外参数...] -> 打印 HTTP 状态码
+          http() {
+            local out="$1" method="$2" url="$3"; shift 3
+            local retry_args=()
+            [[ "$method" == "GET" ]] && retry_args=(--retry 3 --retry-delay 2)
+            local code
+            if ! code=$(curl -sS "${retry_args[@]}" -o "$out" -w '%{http_code}' \
+                          -X "$method" "${GT_HDR[@]}" "$@" "$url"); then
+              echo "000"; return 0
+            fi
+            echo "$code"
+          }
+          peek() { head -c 400 "$1" 2>/dev/null | tr -d '\n'; }
+
+          # ---------- 1. 定位本次 Release ----------
+          code=$(http "$TMP/rel.json" GET "$GITEA_API/repos/$GITEA_REPO/releases/tags/$TAG")
+          [[ "$code" == "200" ]] \
+            || err "Gitea 中不存在版本 $TAG 或 Token 无读取权限（HTTP $code）：$(peek "$TMP/rel.json")"
+          if [[ "$(jq -r '.draft // false' "$TMP/rel.json")" == "true" ]]; then
+            err "Gitea 上 $TAG 仍为草稿，请先发布该版本再构建附件"
+          fi
+          REL_ID=$(jq -r '.id' "$TMP/rel.json")
+          echo "目标 Release：$TAG（id=$REL_ID）"
+
+          # ---------- 2. 逐个上传 4 个产物 ----------
+          NAMES=(nexhome-amd64.exe nexhome-arm64.exe nexhome-amd64 nexhome-arm64)
+          # 附件 id 列表由刚拉到的 Release 提供
+          uploaded=0
+          skipped=0
+          for name in "${NAMES[@]}"; do
+            file="dist/$name"
+            [[ -s "$file" ]] || err "缺少产物：$file（编译步骤未产出该文件）"
+            size=$(wc -c < "$file" | tr -d ' ')
+            # Gitea 默认 [attachment] MAX_FILE_SIZE = 50MiB，超限时提前给出提示，
+            # 避免只在 POST 阶段看到一个晦涩的 422
+            if [[ "$size" -gt 52428800 ]]; then
+              echo "::warning::$name 为 $size 字节，超过 Gitea 默认的 50MiB 附件上限；上传若失败请在 app.ini 调大 [attachment] MAX_FILE_SIZE"
+            fi
+            a_id=$(jq -r --arg n "$name" '(.assets // [])[] | select(.name == $n) | .id' "$TMP/rel.json" | head -n1)
+            if [[ -n "$a_id" && "$a_id" != "null" ]]; then
+              if [[ "$FORCE" == "false" ]]; then
+                echo "附件已存在，按 force_reupload=false 跳过：$name"
+                skipped=$((skipped + 1))
+                continue
+              fi
+              echo "附件已存在，先删除再重传：$name（asset id=$a_id）"
+              # 新版 Gitea：DELETE /repos/{o}/{r}/releases/{id}/assets/{attachment_id}
+              code=$(http "$TMP/del.json" DELETE "$GITEA_API/repos/$GITEA_REPO/releases/$REL_ID/assets/$a_id")
+              if [[ "$code" != "204" && "$code" != "200" ]]; then
+                # 旧版 Gitea 路由（单数 release）
+                code=$(http "$TMP/del.json" DELETE "$GITEA_API/repos/$GITEA_REPO/release/assets/$a_id")
+              fi
+              [[ "$code" == "204" || "$code" == "200" ]] \
+                || err "删除旧附件失败：$name（HTTP $code）：$(peek "$TMP/del.json")"
+            fi
+            # Gitea 的附件上传接口：body 就是文件原始字节，文件名走 name 查询参数
+            code=$(http "$TMP/up.json" POST \
+                    "$GITEA_API/repos/$GITEA_REPO/releases/$REL_ID/assets?name=$name" \
+                    -H "Content-Type: application/octet-stream" --data-binary "@$file")
+            [[ "$code" == "201" ]] || err "上传附件失败：$name（HTTP $code）：$(peek "$TMP/up.json")"
+            got_id=$(jq -r '.id // ""' "$TMP/up.json")
+            got_size=$(jq -r '.size // 0' "$TMP/up.json")
+            [[ "$got_size" == "$size" ]] \
+              || err "附件大小与本地不一致：$name（本地 $size，Gitea 记录 $got_size）"
+            uploaded=$((uploaded + 1))
+            echo "附件上传完成：$name（asset id=$got_id，$size 字节）-> $(jq -r '.browser_download_url // empty' "$TMP/up.json")"
+            rm -f "$TMP/up.json"
+          done
+
+          # ---------- 3. 摘要 ----------
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          {
+            echo "### 二进制产物已挂到 Gitea Release"
+            echo "- tag：\`$TAG\`"
+            echo "- 附件：新上传 $uploaded 个，跳过已存在 $skipped 个"
+            echo "- 下载：$GITEA_SERVER_URL/$GITEA_REPO/releases/tag/$TAG"
+            echo ""
+            echo "GitHub 侧由 \`Release 同步发布到 GitHub\` 工作流自动搬运，无需再手动操作。"
+          } >> "$summary"
+          echo "完成：$TAG 已挂载 $uploaded 个附件（跳过 $skipped 个）"
