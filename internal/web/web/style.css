@@ -62,8 +62,8 @@
     --err-soft-border: rgba(255, 69, 58, .42);
     
     /* 圆角：卡片 12px、控件 8px、按钮胶囊（Apple 用 980px）；卡片无投影，仅浮层有轻投影 */
-    --radius: 12px;
-    --radius-sm: 8px;
+    --radius: 0px;
+    --radius-sm: 0px;
     --radius-pill: 980px;
     --shadow-pop: 0 6px 20px rgba(0, 0, 0, .45);
     
