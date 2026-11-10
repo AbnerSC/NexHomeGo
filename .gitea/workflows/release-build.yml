@@ -137,8 +137,10 @@ jobs:
           apt-get install -y -qq --no-install-recommends curl ca-certificates jq file xz-utils
 
           # linux/arm64 与 windows/amd64 的交叉编译器：仓库里有才装。
+          # libc6-dev-arm64-cross 提供 aarch64 的 C 库头文件（bits/ 目录），
+          # 仅有 gcc-aarch64-linux-gnu 而缺它时 cgo 会报找不到 bits/libc-header-start.h。
           # 装不上不在这里失败，编译步骤会自动回退 Zig（换发行版/换镜像源时更稳）
-          for p in gcc-aarch64-linux-gnu gcc-mingw-w64-x86-64; do
+          for p in gcc-aarch64-linux-gnu libc6-dev-arm64-cross gcc-mingw-w64-x86-64; do
             if apt-cache show "$p" >/dev/null 2>&1; then
               apt-get install -y -qq --no-install-recommends "$p" \
                 || echo "::warning::安装 $p 失败，对应目标将回退 Zig"
