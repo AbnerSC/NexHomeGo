@@ -1,5 +1,6 @@
 /* ============ NexHome 全局样式：素净双主题（默认浅色 / 可切深色） ============
-   设计语言（对齐 apple.com 技术规格页）：页面浅灰底 + 卡片纯白 + 1px 发丝线分区 + 近黑正文，
+   设计语言：页面淡蓝灰底 + 卡片纯白 + 1px 蓝灰发丝线分区 + 深蓝灰正文，
+   中性色不用纯灰（避免黑白感），统一带淡蓝调与品牌蓝同色相族；
    颜色只留一颗品牌蓝（#0071e3）做实底与线条，状态用 Apple system 鲜亮语义色（绿/红/橙/青）。
    明确不使用：渐变、发光阴影、毛玻璃(backdrop-filter)、极光背景、任何动画与过渡。
    层级靠四件事表达：底色明度差、边框、字重、强调色；标题带蓝色指示条，按钮/重点提示以对比度优先。
@@ -10,18 +11,18 @@
     /* 深色渲染原生控件（下拉箭头、数字步进器、复选框等），与主题底色一致 */
     color-scheme: dark;
 
-    /* 底色与层次（对齐 Apple 深色：页面 #161617 / 卡片 #1d1d1f / 控件 #2c2c2e / 发丝线 #3a3a3c）。
-       层次靠“白与灰的明度差 + 1px 细线”，不靠把颜色压灰 */
-    --bg: #161617;           /* 页面底 */
-    --bg-2: #1d1d1f;         /* 表头 / 弹窗头 / 分区底 */
-    --panel: #1d1d1f;        /* 卡片实底色 */
-    --panel-glass: #2c2c2e;  /* 普通按钮 / 控件实底 */
-    --hover: #2c2c2e;        /* 行 / 按钮 / 磁贴悬停底 */
-    --input-bg: #26262a;     /* 输入框底 */
-    --border: #3a3a3c;
-    --border-strong: #54545a;
-    --text: #f5f5f7;
-    --muted: #a1a1a6;
+    /* 底色与层次。中性色一律不用纯灰，而是带蓝调的深蓝灰（与品牌蓝同色相族），
+       避免整屏黑白感；层次靠“明度差 + 1px 细线”表达，亮度与纯灰方案持平不影响对比度 */
+    --bg: #131a22;           /* 页面底 */
+    --bg-2: #1a232e;         /* 表头 / 弹窗头 / 分区底 */
+    --panel: #1a232e;        /* 卡片实底色 */
+    --panel-glass: #26313f;  /* 普通按钮 / 控件实底 */
+    --hover: #26313f;        /* 行 / 按钮 / 磁贴悬停底 */
+    --input-bg: #202b38;     /* 输入框底 */
+    --border: #31404f;
+    --border-strong: #4b5c6e;
+    --text: #e9eef5;
+    --muted: #9aaaba;
     
     /* 强调色：Apple 品牌蓝。实底（按钮/开关/指示条/图表主线）统一用 --accent，
        文字一律用更亮的 --link；两者分开是因为亮蓝当文字色在深底上对比度会不足 */
@@ -43,21 +44,21 @@
     --err-fg: #ff8a80;       /* 实色 #ff453a 压在深底上仅 2.7:1，文字必须用浅一档 */
     --warn-fg: #ff9f0a;
     --info-fg: #64d2ff;
-    --gray-fg: #b0b0b5;    /* 兼做禁用控件文字：#a1a1a6 压在禁用灰底上仅 4.4:1 */
+    --gray-fg: #aebdd0;    /* 兼做禁用控件文字：需比 --muted 更亮一档才能在蓝灰禁用底上达 AA */
     --ok-bg: rgba(48, 209, 88, .16);
     --err-bg: rgba(255, 69, 58, .16);
     --warn-bg: rgba(255, 159, 10, .16);
     --info-bg: rgba(100, 210, 255, .16);
-    --gray-bg: rgba(161, 161, 166, .16);
+    --gray-bg: rgba(154, 170, 186, .16);
     --ok-bd: rgba(48, 209, 88, .4);
     --err-bd: rgba(255, 69, 58, .45);
     --warn-bd: rgba(255, 159, 10, .4);
     --info-bd: rgba(100, 210, 255, .4);
-    --gray-bd: rgba(161, 161, 166, .32);
+    --gray-bd: rgba(154, 170, 186, .32);
     
     /* 历史别名：docker.js 等内联样式仍按旧变量名引用，取值收敛到对应语义色 */
-    --panel-solid: #2c2c2e;
-    --code-bg: #26262a;
+    --panel-solid: #26313f;
+    --code-bg: #202b38;
     --err-soft-bg: rgba(255, 69, 58, .14);
     --err-soft-border: rgba(255, 69, 58, .42);
     
@@ -68,7 +69,7 @@
     --shadow-pop: 0 6px 20px rgba(0, 0, 0, .45);
     
     /* 图表 / 进度条：--chart-line 为折线主线与条形填充色，面积填充靠 fill-opacity 淡化 */
-    --bar-track: #3a3a3c;
+    --bar-track: #31404f;
     --chart-line: #2997ff;
     
     /* 导航首页背景图：由首页内联样式按配置覆盖（url('...')），默认无背景 */
@@ -500,6 +501,8 @@ code {
 
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 16px; }
 .form-grid .full { grid-column: 1 / -1; }
+/* 证书页服务商凭证设置：三个输入 + 保存按钮并排一行 */
+#certSettingForm { grid-template-columns: 1fr 1fr 1fr auto; }
 
 .field label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
 .field label b { color: var(--err-fg); }
@@ -1240,6 +1243,7 @@ th.docker-sort:hover { color: var(--muted); }
     .sidebar-foot { display: none; }
     .page-body { overflow-y: visible; }
     .form-grid { grid-template-columns: 1fr; }
+    #certSettingForm { grid-template-columns: 1fr; }
     .px-pane { grid-template-columns: 1fr; }
 }
 
@@ -1308,18 +1312,18 @@ th.docker-sort:hover { color: var(--muted); }
 html[data-theme="light"] {
     color-scheme: light;
 
-    /* 底色与层次（对齐 Apple 浅色：页面 #f5f5f7 / 卡片纯白 / 发丝线 #d2d2d7 / 近黑正文）。
-       普通按钮也是白底 + 细线（胶囊描边钮），不再用灰底，整屏才不会发灰 */
-    --bg: #f5f5f7;
-    --bg-2: #fafafc;
+    /* 底色与层次。中性色全部换成带蓝调的蓝灰（页面 / 悬停 / 发丝线 / 次要文字），
+       卡片与输入框仍用纯白保持干净；普通按钮也是白底 + 细线（胶囊描边钮） */
+    --bg: #f2f5fa;
+    --bg-2: #f7f9fc;
     --panel: #ffffff;
     --panel-glass: #ffffff;
-    --hover: #ebebf0;
+    --hover: #e7eef7;
     --input-bg: #ffffff;
-    --border: #d2d2d7;
-    --border-strong: #b7b7bd;
-    --text: #1d1d1f;
-    --muted: #6e6e73;
+    --border: #d3dde9;
+    --border-strong: #b6c5d6;
+    --text: #1c2733;
+    --muted: #5b6b7d;
 
     /* 强调色：Apple “购买”按钮那颗蓝（#0071e3 + 白字 = 4.69:1，达 AA） */
     --accent: #0071e3;
@@ -1341,35 +1345,35 @@ html[data-theme="light"] {
     --err-fg: #d70015;
     --warn-fg: #a05a00;
     --info-fg: #0a6a8f;
-    --gray-fg: #5a5a5f;    /* 兼做禁用控件文字：比 --muted 深一档，保证灰胶囊与禁用态都达 AA */
+    --gray-fg: #4f5f70;    /* 兼做禁用控件文字：比 --muted 深一档，保证灰胶囊与禁用态都达 AA */
     --ok-bg: rgba(52, 199, 89, .12);
     --err-bg: rgba(255, 59, 48, .1);
     --warn-bg: rgba(255, 149, 0, .14);
     --info-bg: rgba(90, 200, 250, .16);
-    --gray-bg: rgba(110, 110, 115, .1);
+    --gray-bg: rgba(91, 107, 125, .12);
     --ok-bd: rgba(52, 199, 89, .4);
     --err-bd: rgba(255, 59, 48, .38);
     --warn-bd: rgba(255, 149, 0, .42);
     --info-bd: rgba(90, 200, 250, .45);
-    --gray-bd: rgba(110, 110, 115, .3);
+    --gray-bd: rgba(91, 107, 125, .32);
 
     /* 历史别名 */
     --panel-solid: #ffffff;
-    --code-bg: #f5f5f7;
+    --code-bg: #eef3f9;
     --err-soft-bg: rgba(255, 59, 48, .07);
     --err-soft-border: rgba(255, 59, 48, .34);
 
-    /* 阴影：浅底用更轻的投影 */
-    --shadow-pop: 0 4px 14px rgba(20, 25, 30, .14);
+    /* 阴影：浅底用更轻的蓝灰投影 */
+    --shadow-pop: 0 4px 14px rgba(28, 50, 80, .13);
 
     /* 图表 / 进度条 */
-    --bar-track: #e8e8ed;
+    --bar-track: #dfe8f2;
     --chart-line: #0071e3;
 
     /* 磁贴主色兜底（图标分析不出主色时用品牌蓝） */
     --tile-accent: 0, 113, 227;
 }
 
-/* 浅色下的遮罩适当变浅，避免白底界面上一片黑 */
+/* 浅色下的遮罩适当变浅并带蓝调，避免白底界面上一片黑 */
 html[data-theme="light"] .modal-mask,
-html[data-theme="light"] .confirm-mask { background: rgba(30, 35, 40, .35); }
+html[data-theme="light"] .confirm-mask { background: rgba(24, 38, 56, .35); }

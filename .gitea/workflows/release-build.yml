@@ -108,7 +108,7 @@ env:
 jobs:
   build-binaries:
     name: 交叉编译并上传 Release 附件
-    runs-on: golang
+    runs-on: golong-build
     # 四个目标串行编译，其中两个是 CGO 交叉编译 + QEMU 无关，但 apt 装工具链
     # 与 SQLite amalgamation 编译都比较耗时，留足余量
     timeout-minutes: 60
