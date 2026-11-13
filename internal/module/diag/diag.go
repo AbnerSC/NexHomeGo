@@ -10,7 +10,7 @@ import (
 	"NexHomeGo/internal/web"
 )
 
-// 内存诊断模块（按 Go 特性重做，独立成模块）。
+// 内存监控模块（按 Go 特性重做，独立成模块）。
 // 只做两件事：
 //  1. 当前实时内存使用情况（本进程 Go 运行时 + 进程 RSS，请求时现采，不依赖采样周期）；
 //  2. 内存时间线——最近 24 小时曲线（每 60 秒采样入库，页面只取 24 小时窗口）。
@@ -24,7 +24,7 @@ const (
 	retentionDays = 7  // 数据保留天数（入库后超过即清理）
 )
 
-// RegisterRoutes 注册内存诊断接口。
+// RegisterRoutes 注册内存监控接口。
 func RegisterRoutes() {
 	web.Route("GET", "/api/diag/memory", func(c *web.Ctx) error {
 		c.Ok(snapshot())
@@ -40,7 +40,7 @@ func Init() {
 	sample()
 	core.Every(intervalSec, intervalSec, sample)
 	core.Every(60, 3600, prune)
-	core.LogInfo(core.LogSys, "内存诊断采样已启动：每 60 秒入库，保留 7 天（页面展示最近 24 小时）")
+	core.LogInfo(core.LogSys, "内存监控采样已启动：每 60 秒入库，保留 7 天（页面展示最近 24 小时）")
 }
 
 // ---------- 采样与清理 ----------
@@ -90,14 +90,14 @@ func migrateUnitScale() {
 	}
 	n, err := core.Update("DELETE FROM diag_memory")
 	if err != nil {
-		core.LogError(core.LogSys, "内存诊断旧口径样本清理失败: "+err.Error())
+		core.LogError(core.LogSys, "内存监控旧口径样本清理失败: "+err.Error())
 		return
 	}
 	if err := core.SetConfig(unitFixKey, "2"); err != nil {
-		core.LogError(core.LogSys, "内存诊断口径标记写入失败: "+err.Error())
+		core.LogError(core.LogSys, "内存监控口径标记写入失败: "+err.Error())
 		return
 	}
-	core.LogInfo(core.LogSys, fmt.Sprintf("内存诊断 MB 口径已修正为 1 MB = 1048576 字节，清理旧口径样本 %d 条", n))
+	core.LogInfo(core.LogSys, fmt.Sprintf("内存监控 MB 口径已修正为 1 MB = 1048576 字节，清理旧口径样本 %d 条", n))
 }
 
 // sample 采集一次并入库。
@@ -107,7 +107,7 @@ func sample() {
 		VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
 		s.at.UnixMilli(), s.at.Format("2006-01-02 15:04:05"),
 		s.rss, s.heap, s.heapSys, s.heapObj, s.stack, s.sys, s.thr, s.gc, s.gcMs); err != nil {
-		core.LogError(core.LogSys, "内存诊断采样入库失败: "+err.Error())
+		core.LogError(core.LogSys, "内存监控采样入库失败: "+err.Error())
 	}
 }
 
@@ -116,11 +116,11 @@ func prune() {
 	cutoff := time.Now().Add(-retentionDays * 24 * time.Hour).UnixMilli()
 	n, err := core.Update("DELETE FROM diag_memory WHERE ts < ?", cutoff)
 	if err != nil {
-		core.LogError(core.LogSys, "内存诊断过期数据清理失败: "+err.Error())
+		core.LogError(core.LogSys, "内存监控过期数据清理失败: "+err.Error())
 		return
 	}
 	if n > 0 {
-		core.LogInfo(core.LogSys, fmt.Sprintf("内存诊断数据已清理：删除 %d 条超过 %d 天的样本", n, retentionDays))
+		core.LogInfo(core.LogSys, fmt.Sprintf("内存监控数据已清理：删除 %d 条超过 %d 天的样本", n, retentionDays))
 	}
 }
 
@@ -135,7 +135,7 @@ func snapshot() *core.Row {
 	rows, err := core.Query(`SELECT ts, time, rss, heap, heap_sys, heap_obj, stack, sys, thr, gc, gc_ms
 		FROM diag_memory WHERE ts >= ? ORDER BY ts`, from)
 	if err != nil {
-		core.LogError(core.LogSys, "读取内存诊断时间线失败: "+err.Error())
+		core.LogError(core.LogSys, "读取内存监控时间线失败: "+err.Error())
 	}
 	for _, r := range rows {
 		hist.Append(core.NewRow().

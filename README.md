@@ -134,10 +134,10 @@ docker compose up -d
 <img src="docs/ScreenShot_5.png" style="width: 100%" alt="代理中心">
 </div>
 
-- 内存诊断
+- 内存监控
 
 <div style="text-align: center">
-<img src="docs/ScreenShot_6.png" style="width: 100%" alt="内存诊断">
+<img src="docs/ScreenShot_6.png" style="width: 100%" alt="内存监控">
 </div>
 
 - 系统设置

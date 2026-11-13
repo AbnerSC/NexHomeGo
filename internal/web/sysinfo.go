@@ -17,7 +17,7 @@ import (
 
 // Go 原生系统信息采集：替代 Java 的 OperatingSystemMXBean / Runtime 内存读数。
 // 生产目标为 Linux 容器，优先读 /proc；本地非 Linux 环境优雅降级（返回 -1 / 0）。
-// 决策①：内存诊断页按 Go 特性重做，这里的 RSSBytes 等采集同时服务于 /api/system/metrics 与内存诊断模块 /api/diag/memory。
+// 决策①：内存监控页按 Go 特性重做，这里的 RSSBytes 等采集同时服务于 /api/system/metrics 与内存监控模块 /api/diag/memory。
 
 var procBase = "/proc"
 

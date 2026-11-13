@@ -2,7 +2,7 @@
 /* 主入口：通用工具、登录鉴权、页面路由。
    各菜单模块的逻辑拆分到 js/ 目录（须在 index.html 中先于本文件加载）：
    dashboard=仪表盘 home=网站导航 ddns=DDNS stun=STUN monitor=可用性监控 notify=通知中心
-   wol=WOL cert=SSL证书 proxy=反向代理 docker=Docker logs=日志 diag=内存诊断 settings=设置 */
+   wol=WOL cert=SSL证书 proxy=反向代理 docker=Docker logs=日志 diag=内存监控 settings=设置 */
 'use strict';
 
 const $ = s => document.querySelector(s);
@@ -153,6 +153,166 @@ function confirmBox(opts) {
         document.addEventListener('keydown', onKey, true);
     });
 }
+
+/* ---------------- 自定义下拉：接管原生 select 的展开列表 ----------------
+   原生 select 展开后的选项列表是系统级菜单（白底紧凑行 + 系统蓝选中条），
+   与主题风格脱节且无法定制。这里为每个 select 生成「触发器 + 浮层列表」接管
+   视觉与交互；原生 select 保留在 DOM 中隐藏，继续作为数据源 ——
+   FormData 提交、onchange 内联联动、disabled 语义全部不变。
+   表单/页面均为 innerHTML 重建，靠 MutationObserver 自动增强新出现的 select。 */
+
+const SEL_OPEN = { sel: null, view: null, menu: null, hl: -1 };   // 当前展开的下拉（全局仅一份）
+
+function selText(sel) {
+    const o = sel.options[sel.selectedIndex];
+    return o ? o.text : '';
+}
+
+/** 触发器与原生 select 同步：文字 / 禁用态（options 动态替换、批量设置 disabled 时调用） */
+function syncSelectView(sel) {
+    const view = sel._selView;
+    if (!view) return;
+    view.querySelector('.select-view-text').textContent = selText(sel);
+    view.classList.toggle('disabled', sel.disabled);
+    view.tabIndex = sel.disabled ? -1 : 0;
+}
+
+function closeSelect() {
+    if (!SEL_OPEN.sel) return;
+    SEL_OPEN.menu.remove();
+    SEL_OPEN.view.classList.remove('open');
+    SEL_OPEN.sel = SEL_OPEN.view = SEL_OPEN.menu = null;
+    SEL_OPEN.hl = -1;
+}
+
+/** 打开浮层：挂 body 用 fixed 定位，不被弹窗 overflow 裁剪（与原生菜单行为一致） */
+function openSelect(sel, view) {
+    closeSelect();
+    const menu = document.createElement('div');
+    menu.className = 'select-menu';
+    [...sel.options].forEach((o, i) => {
+        const item = document.createElement('div');
+        item.className = 'select-opt' + (o.selected ? ' active' : '') + (o.disabled ? ' disabled' : '');
+        item.dataset.idx = i;
+        item.textContent = o.text;
+        menu.appendChild(item);
+    });
+    if (!sel.options.length) menu.innerHTML = '<div class="select-empty">暂无选项</div>';
+    menu.style.visibility = 'hidden';
+    document.body.appendChild(menu);
+    // 定位：默认展开在触发器下方，下方空间不足且上方更宽裕时翻转到上方
+    const r = view.getBoundingClientRect();
+    menu.style.minWidth = r.width + 'px';
+    const below = innerHeight - r.bottom - 8, above = r.top - 8;
+    menu.style.maxHeight = Math.min(288, Math.max(140, Math.max(below, above))) + 'px';
+    const mh = menu.offsetHeight;
+    if (below < mh && above > below) menu.style.top = Math.max(8, r.top - mh - 4) + 'px';
+    else menu.style.top = r.bottom + 4 + 'px';
+    menu.style.left = r.left + 'px';
+    menu.style.visibility = '';
+    // 长列表（如 STUN 服务器）滚动到选中项并居中，不用从头找
+    const act = menu.querySelector('.select-opt.active');
+    if (act) menu.scrollTop = act.offsetTop - menu.clientHeight / 2 + act.offsetHeight / 2;
+    // 选项点击用 mousedown 跟手；document 的关闭监听同为 mousedown，菜单内点击不会先触发关闭
+    menu.addEventListener('mousedown', e => {
+        const t = e.target.closest('.select-opt');
+        if (t && !t.classList.contains('disabled')) pickSelect(sel, Number(t.dataset.idx));
+    });
+    SEL_OPEN.sel = sel;
+    SEL_OPEN.view = view;
+    SEL_OPEN.menu = menu;
+    view.classList.add('open');
+}
+
+/** 键盘高亮：上下移动可视焦点，Enter 确认 */
+function highlightSelect(i) {
+    SEL_OPEN.hl = i;
+    SEL_OPEN.menu.querySelectorAll('.select-opt').forEach(el =>
+        el.classList.toggle('hl', Number(el.dataset.idx) === i));
+    const el = SEL_OPEN.menu.querySelector('.select-opt.hl');
+    if (el) {
+        if (el.offsetTop < SEL_OPEN.menu.scrollTop) SEL_OPEN.menu.scrollTop = el.offsetTop;
+        else if (el.offsetTop + el.offsetHeight > SEL_OPEN.menu.scrollTop + SEL_OPEN.menu.clientHeight)
+            SEL_OPEN.menu.scrollTop = el.offsetTop + el.offsetHeight - SEL_OPEN.menu.clientHeight;
+    }
+}
+
+/** 选中：写回原生 select 并派发 change，内联 onchange 与 FormData 全部按原样工作 */
+function pickSelect(sel, idx) {
+    const o = sel.options[idx];
+    if (!o || o.disabled) return;
+    closeSelect();
+    if (sel.value !== o.value) {   // 与原生一致：重复选择当前项不触发 change
+        sel.value = o.value;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    syncSelectView(sel);
+}
+
+function enhanceSelect(sel) {
+    if (sel.dataset.selEnhanced) return;
+    sel.dataset.selEnhanced = '1';
+    const view = document.createElement('div');
+    view.className = 'select-view';
+    view.innerHTML = '<span class="select-view-text"></span>';
+    // select 上的内联布局样式（flex/min-width/宽度等）转移到触发器，右侧统一留出自绘箭头位
+    if (sel.style.cssText) { view.style.cssText = sel.style.cssText; view.style.paddingRight = '30px'; }
+    sel.before(view);
+    sel.setAttribute('hidden', '');
+    sel._selView = view;
+    syncSelectView(sel);
+    view.addEventListener('click', () => {
+        if (sel.disabled) return;
+        if (SEL_OPEN.sel === sel) closeSelect();
+        else openSelect(sel, view);
+    });
+    // 键盘：Enter/空格/↓ 打开，↑↓ 移动高亮（跳过禁用项），Enter 确认，Esc/Tab 关闭
+    view.addEventListener('keydown', e => {
+        if (sel.disabled) return;
+        const list = [...sel.options];
+        if (SEL_OPEN.sel !== sel) {
+            if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown') {
+                e.preventDefault();
+                openSelect(sel, view);
+                highlightSelect(Math.max(0, list.findIndex(o => o.selected)));
+            }
+            return;
+        }
+        let hl = SEL_OPEN.hl >= 0 ? SEL_OPEN.hl : Math.max(0, list.findIndex(o => o.selected));
+        if (e.key === 'ArrowDown') { e.preventDefault(); do { hl++; } while (hl < list.length - 1 && list[hl].disabled); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); do { hl--; } while (hl > 0 && list[hl].disabled); }
+        else if (e.key === 'Enter') { e.preventDefault(); pickSelect(sel, hl); return; }
+        else { if (e.key === 'Escape' || e.key === 'Tab') closeSelect(); return; }
+        highlightSelect(hl);
+    });
+    // options 动态替换（ESA 站点异步加载等）与 option selected/disabled 属性变化时同步视图，
+    // 浮层开着则按新列表重建
+    new MutationObserver(() => {
+        syncSelectView(sel);
+        if (SEL_OPEN.sel === sel) openSelect(sel, view);
+    }).observe(sel, { childList: true, subtree: true, attributes: true });
+}
+
+// 全局扫描：innerHTML 重建的表单/页面中出现新 select 时自动增强（合并同一波的多次回调）
+let selScanQueued = false;
+new MutationObserver(() => {
+    if (selScanQueued) return;
+    selScanQueued = true;
+    setTimeout(() => {
+        selScanQueued = false;
+        if (SEL_OPEN.sel && !SEL_OPEN.sel.isConnected) closeSelect();   // 所属弹窗被整体重建时收起浮层
+        $$('select:not([data-sel-enhanced])').forEach(enhanceSelect);
+    }, 0);
+}).observe(document.documentElement, { childList: true, subtree: true });
+
+// 点击浮层外收起；滚动（列表自身滚动除外）/窗口尺寸变化时收起，避免浮层与触发器错位
+document.addEventListener('mousedown', e => {
+    if (SEL_OPEN.sel && !SEL_OPEN.menu.contains(e.target) && !e.target.closest('.select-view')) closeSelect();
+}, true);
+document.addEventListener('scroll', e => {
+    if (SEL_OPEN.sel && !SEL_OPEN.menu.contains(e.target)) closeSelect();
+}, true);
+window.addEventListener('resize', closeSelect);
 
 function badge(text, cls) { return `<span class="badge ${cls}">${esc(text)}</span>`; }
 
@@ -309,7 +469,7 @@ function stopSysMetrics() {
 const PAGE_TITLES = {
     dashboard: '总览', home: '网站导航', ddns: 'DDNS 域名同步', stun: 'STUN 端口穿透',
     monitor: '可用性监控', notify: '通知中心',
-    wol: 'WOL 网络唤醒', cert: 'SSL 证书管理', proxy: '反向代理中心', docker: 'Docker 容器', logs: '操作日志', diag: '内存诊断', settings: '系统设置'
+    wol: 'WOL 网络唤醒', cert: 'SSL 证书管理', proxy: '反向代理中心', docker: 'Docker 容器', logs: '操作日志', diag: '内存监控', settings: '系统设置'
 };
 
 const RENDER = {

@@ -65,7 +65,7 @@ func main() {
 	stun.RegisterRoutes()
 	docker.RegisterRoutes()
 	proxy.RegisterRoutes()
-	diag.RegisterRoutes() // 内存诊断（独立模块）：实时内存 + 24 小时时间线
+	diag.RegisterRoutes() // 内存监控（独立模块）：实时内存 + 24 小时时间线
 
 	// Dashboard 跨模块数据源注入（解耦：web 包不直接依赖业务模块）
 	web.DockerSummaryProvider = docker.DashboardSummary
@@ -82,7 +82,7 @@ func main() {
 	}
 
 	// 6) 后台周期任务
-	diag.Init() // 内存诊断采样（间隔 60 秒，保留最近 24 小时）
+	diag.Init() // 内存监控采样（间隔 60 秒，保留最近 24 小时）
 	nav.Init()
 	monitor.Init()                         // 加载启用任务并建立周期探测调度
 	notify.Init()                          // 拉起投递队列 + 定期清理 notify_log

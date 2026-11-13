@@ -13,9 +13,9 @@ function armLogsRefresh() {
 async function refreshLogsRows() {
     const tbody = $('#logTbody');
     if (!tbody) return; // 已离开本页，静默退出
-    const r = await api('GET', `/api/logs?page=${logPage}&size=50&module=${encodeURIComponent(logModule)}`);
+    const r = await api('GET', `/api/logs?page=${logPage}&size=15&module=${encodeURIComponent(logModule)}`);
     const total = Number(r.total);
-    const pages = Math.max(1, Math.ceil(total / 50));
+    const pages = Math.max(1, Math.ceil(total / 15));
     tbody.innerHTML = r.list.map(l => `
       <tr class="${l.level === 'ERROR' ? 'log-row-error' : l.level === 'WARN' ? 'log-row-warn' : ''}">
         <td class="log-cell-time">${esc(l.time)}</td>

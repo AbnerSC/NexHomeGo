@@ -1,7 +1,7 @@
 /* ============ 系统设置模块 ============ */
 'use strict';
 
-/** AccessKey ID 脱敏展示（前 4 后 4，中间省略） */
+/** AccessKey ID / 接口访问令牌脱敏展示（前 4 后 4，中间省略），用于默认查看态避免明文泄露 */
 function maskAk(id) {
     const s = String(id || '');
     return s.length <= 8 ? s : s.slice(0, 4) + '****' + s.slice(-4);
@@ -104,13 +104,17 @@ async function renderSettings() {
           <div class="field full"><label>Access-Token（${at.minLength || 32}~${at.maxLength || 64} 位字母/数字/-/_，留空停用）</label>
             <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
               <input name="token" maxlength="${at.maxLength || 64}" style="flex:1;min-width:240px"
-                     placeholder="留空表示停用，可点右侧按钮随机生成" value="${esc(at.token || '')}">
-              <button type="button" class="btn" onclick="atGenerate()">随机生成</button>
-              <button type="button" class="btn" onclick="atCopy()">复制</button>
+                     placeholder="留空表示停用，可点右侧按钮随机生成" value="${esc(maskAk(at.token))}">
+              <button type="button" class="btn" id="atGenBtn" onclick="atGenerate()">随机生成</button>
+              <button type="button" class="btn" id="atCopyBtn" onclick="atCopy()">复制</button>
             </div>
             <div class="small muted" style="margin-top:6px">调用示例：
               <code>curl -H "Access-Token: &lt;令牌&gt;" http://地址:端口/api/cert/tasks</code>；保存后立即生效，无需重启。</div></div>
-          <div class="form-foot full"><button class="btn primary">保存令牌</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="atEditFoot">
+            <button type="button" class="btn" onclick="atSetEditing(false)">取消</button>
+            <button class="btn primary">保存令牌</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="atViewFoot">
+            <button type="button" class="btn primary" onclick="atSetEditing(true)">编辑</button></div>
         </form>
       </div>
       <div class="panel">
@@ -121,17 +125,17 @@ async function renderSettings() {
         <div class="toolbar" style="margin-bottom:10px"><div class="spacer"></div>
           <button class="btn primary" onclick="provForm()">＋ 新增配置</button></div>
         <table>
-          <thead><tr><th>名称</th><th>服务商</th><th>AccessKey ID</th><th>ESA 站点</th><th>操作</th></tr></thead>
+          <thead><tr><th>名称</th><th>服务商</th><th>AccessKey ID</th><th>ESA 站点</th><th style="width: 140px">操作</th></tr></thead>
           <tbody>${cfgRows || '<tr><td colspan="5" class="muted">暂无配置，可在 DDNS / 证书表单中手动填写凭证</td></tr>'}</tbody>
         </table>
       </div>
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">修改登录密码</h3>
-        <form id="pwdForm">
-          <div class="field" style="width: 200px"><label>原密码 <b>*</b></label><input name="old_password" type="password" required></div>
-          <div class="field" style="width: 200px"><label>新密码 <b>*</b>（至少12位）</label><input name="new_password" type="password" required minlength="12"></div>
-          <div class="field" style="width: 200px"><label>确认新密码 <b>*</b></label><input name="confirm" type="password" required></div>
-          <div class="field" style="align-self:end; margin-top: 10px"><button class="btn primary">修改密码</button></div>
+        <form id="pwdForm" class="form-grid">
+          <div class="field"><label>原密码 <b>*</b></label><input name="old_password" type="password" required></div>
+          <div class="field"><label>新密码 <b>*</b>（至少12位）</label><input name="new_password" type="password" required minlength="12"></div>
+          <div class="field"><label>确认新密码 <b>*</b></label><input name="confirm" type="password" required></div>
+          <div class="field" style="align-self:end"><button class="btn primary">修改密码</button></div>
         </form>
       </div>
       <div class="panel">
@@ -141,7 +145,11 @@ async function renderSettings() {
         <form id="secForm" class="form-grid">
           <div class="field"><label>最大失败次数（1~100）</label><input name="maxFails" type="number" min="1" max="100" required value="${sec.maxFails ?? 3}"></div>
           <div class="field"><label>锁定时长（分钟，1~1440）</label><input name="lockMinutes" type="number" min="1" max="1440" required value="${sec.lockMinutes ?? 30}"></div>
-          <div class="form-foot full"><button class="btn primary">保存安全设置</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="secEditFoot">
+            <button type="button" class="btn" onclick="secSetEditing(false)">取消</button>
+            <button class="btn primary">保存安全设置</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="secViewFoot">
+            <button type="button" class="btn primary" onclick="secSetEditing(true)">编辑</button></div>
         </form>
       </div>
       <div class="panel">
@@ -226,6 +234,37 @@ async function renderSettings() {
     };
     $('#accessForm').querySelectorAll('input,select').forEach(el => { el.disabled = true; });
     $('#accEditFoot').classList.add('hidden');
+
+    // 接口访问令牌：默认掩码只读展示，主动点击「编辑」后才显示明文并可修改与保存
+    const atTokenInput = $('#atForm').querySelector('[name="token"]');
+    window.atSetEditing = on => {
+        // 取消编辑：重新渲染恢复服务端当前令牌与只读掩码状态
+        if (!on) { renderSettings(); return; }
+        // 进入编辑时回填真实令牌（默认展示的是掩码值，直接保存会把掩码串写入）
+        atTokenInput.value = at.token || '';
+        atTokenInput.disabled = false;
+        atTokenInput.placeholder = '留空表示停用，可点右侧按钮随机生成';
+        $('#atGenBtn').classList.remove('hidden');
+        $('#atCopyBtn').classList.remove('hidden');
+        $('#atEditFoot').classList.remove('hidden');
+        $('#atViewFoot').classList.add('hidden');
+    };
+    atTokenInput.disabled = true;
+    if (!at.token) atTokenInput.placeholder = '未启用，点击「编辑」后可生成';
+    $('#atGenBtn').classList.add('hidden');
+    $('#atCopyBtn').classList.add('hidden');
+    $('#atEditFoot').classList.add('hidden');
+
+    // 登录安全设置：默认只读查看，主动点击「编辑」后才可修改与保存
+    window.secSetEditing = on => {
+        // 取消编辑：重新渲染恢复服务端当前配置与只读状态
+        if (!on) { renderSettings(); return; }
+        $('#secForm').querySelectorAll('input').forEach(el => { el.disabled = false; });
+        $('#secEditFoot').classList.remove('hidden');
+        $('#secViewFoot').classList.add('hidden');
+    };
+    $('#secForm').querySelectorAll('input').forEach(el => { el.disabled = true; });
+    $('#secEditFoot').classList.add('hidden');
 
     // HTTPS 相关字段随开关显示/隐藏
     window.accHttpsChanged = v => {

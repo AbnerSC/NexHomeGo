@@ -50,7 +50,11 @@ async function renderCert() {
           <div class="field"><label>联系邮箱（可选）</label><input name="email" type="email" value="${esc(s.email || '')}"></div>
           <div class="field"><label>ZeroSSL EAB KID</label><input name="zerossl_eab_kid" value="${esc(s.zerossl_eab_kid || '')}"></div>
           <div class="field"><label>ZeroSSL EAB HMAC Key</label><input name="zerossl_eab_hmac" type="password" value="${esc(s.zerossl_eab_hmac || '')}"></div>
-          <div class="field" style="align-self:end"><button class="btn primary">保存设置</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="certSettingEditFoot">
+            <button type="button" class="btn" onclick="certSetEditing(false)">取消</button>
+            <button class="btn primary">保存设置</button></div>
+          <div class="form-foot full" style="margin-top:6px" id="certSettingViewFoot">
+            <button type="button" class="btn primary" onclick="certSetEditing(true)">编辑</button></div>
         </form>
       </div>
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="certForm()">＋ 新增证书任务</button></div>
@@ -62,7 +66,7 @@ async function renderCert() {
             <th style="width:10%">状态</th>
             <th style="width:10%">到期时间</th>
             <th style="width:10%">自动续期</th>
-            <th style="width:280px">操作</th>
+            <th style="width:300px">操作</th>
           </tr>
         </thead>
         <tbody id="certTbody"><tr><td colspan="6" class="muted">加载中...</td></tr></tbody>
@@ -70,9 +74,19 @@ async function renderCert() {
     $('#certSettingForm').addEventListener('submit', async e => {
         e.preventDefault();
         const body = Object.fromEntries(new FormData(e.target).entries());
-        try { await api('PUT', '/api/cert/settings', body); toast('设置已保存'); }
+        try { await api('PUT', '/api/cert/settings', body); toast('设置已保存'); renderCert(); }
         catch (err) { toast(err.message, 'err'); }
     });
+    // 服务商凭证设置：默认只读查看，主动点击「编辑」后才可修改与保存
+    window.certSetEditing = on => {
+        // 取消编辑：重新渲染恢复服务端当前配置与只读状态
+        if (!on) { renderCert(); return; }
+        $('#certSettingForm').querySelectorAll('input').forEach(el => { el.disabled = false; });
+        $('#certSettingEditFoot').classList.remove('hidden');
+        $('#certSettingViewFoot').classList.add('hidden');
+    };
+    $('#certSettingForm').querySelectorAll('input').forEach(el => { el.disabled = true; });
+    $('#certSettingEditFoot').classList.add('hidden');
     await refreshCertRows();
     setRefresh(refreshCertRows, 8000);
 }
@@ -181,7 +195,9 @@ window.certForm = async (id) => {
           <input name="webhook_url" placeholder="https://example.com/hooks/cert，留空则不推送" value="${esc(t.webhook_url || '')}">
           <div class="small muted" style="margin-top:6px;line-height:1.7">
             以 <b>Content-Type: application/json</b> 的 <b>HTTP POST</b> 发送如下请求体，接收端按此字段解析即可（签发/续期成功后自动触发，失败不影响证书，仅在日志告警）：
-            <pre style="background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;white-space:pre-wrap;font-size:12px;margin:6px 0 0;word-break:break-all">{
+            <details style="margin:6px 0 0">
+              <summary style="cursor:pointer;user-select:none;color:var(--link);list-style:revert">查看请求体示例</summary>
+              <pre style="background:var(--code-bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:6px;white-space:pre-wrap;font-size:12px;margin:6px 0 0;word-break:break-all">{
   "event": "certificate.issued",
   "taskId": "任务ID",
   "name": "任务名称",
@@ -192,6 +208,7 @@ window.certForm = async (id) => {
   "certPem": "-----BEGIN CERTIFICATE----- ...",
   "fullchainPem": "完整证书链 PEM"
 }</pre>
+            </details>
             提示：证书含<b>私钥</b>，请仅推送到可信地址，建议使用 <b>HTTPS</b>；若接收端校验来源，可在网关侧配置固定 Token/白名单。</div></div>
         <div class="form-foot full">
           <button type="button" class="btn" onclick="closeModal()">取消</button>

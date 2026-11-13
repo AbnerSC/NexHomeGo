@@ -205,7 +205,15 @@ async function renderNavManage() {
         <button class="btn primary small" onclick="navForm()">＋ 新增导航</button>
       </div>
       <div class="panel"><table>
-        <thead><tr><th></th><th>图标</th><th>名称</th><th>内网地址</th><th>外网地址</th><th>状态</th><th>操作</th></tr></thead>
+        <thead><tr>
+            <th style="width: 60px"></th>
+            <th style="width: 100px">图标</th>
+            <th style="width: 200px">名称</th>
+            <th>内网地址</th>
+            <th>外网地址</th>
+            <th style="width: 100px">状态</th>
+            <th style="width: 160px">操作</th>
+        </tr></thead>
         <tbody id="navTbody">${rows}</tbody>
       </table></div>`;
     bindDragSort();
