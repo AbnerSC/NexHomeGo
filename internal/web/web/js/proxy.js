@@ -142,7 +142,7 @@ async function refreshProxyRows(preferedStatus) {
         const cert = s.cert_mode === 'TASK' ? '指定' : s.cert_mode === 'NONE' ? 'HTTP' : '自动';
         const isStatic = (s.mode || 'REVERSE') === 'STATIC';
         return `<tr>
-          <td>${esc(s.name)}${isStatic ? ' ' + badge('静态', 'gray') : ''}</td>
+          <td>${esc(s.name)}${isStatic ? ' ' + badge('静态', 'info') : ''}</td>
           <td class="small" style="word-break:break-all">${esc(s.domains)}
             ${s.paths ? `<div class="muted">路径 ${esc(s.paths)}</div>` : ''}</td>
           <td class="docker-mono small" style="word-break:break-all">${isStatic ? '📁 ' : ''}${esc(s.target)}</td>

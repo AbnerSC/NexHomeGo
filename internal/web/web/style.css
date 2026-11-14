@@ -40,6 +40,7 @@
     --red: #ff453a;
     --orange: #ff9f0a;
     --cyan: #48cfcb;         /* 青绿：图表第二序列（比 --chart-line 暗一档，不单靠色相区分） */
+    --purple: #bf5af2;       /* 紫：Docker 统计卡第五色彩条（Apple dark 紫） */
     --ok-fg: #30d158;
     --err-fg: #ff8a80;       /* 实色 #ff453a 压在深底上仅 2.7:1，文字必须用浅一档 */
     --warn-fg: #ff9f0a;
@@ -1097,14 +1098,20 @@ code {
     padding: 14px 14px 14px 17px;
     overflow: hidden;
 }
-/* 左侧 3px 指示条：默认中性，悬停仅换描边，不位移 */
+/* 左侧 3px 指示条：五张统计卡按序各上一色（蓝/绿/青/紫/橙），悬停仅换描边，不位移 */
 .docker-stat::before {
     content: "";
     position: absolute;
     left: 0; top: 0; bottom: 0;
     width: 3px;
-    background: var(--border-strong);
+    background: var(--accent);
 }
+/* 彩条顺序对齐 dockerHeader() 卡片顺序：Docker 版本-品牌蓝 / 容器-绿 / 镜像-青 / 卷-紫 / 宿主-橙 */
+.docker-stats .docker-stat:nth-child(1)::before { background: var(--accent); }
+.docker-stats .docker-stat:nth-child(2)::before { background: var(--green); }
+.docker-stats .docker-stat:nth-child(3)::before { background: var(--cyan); }
+.docker-stats .docker-stat:nth-child(4)::before { background: var(--purple); }
+.docker-stats .docker-stat:nth-child(5)::before { background: var(--orange); }
 .docker-stat:hover { border-color: var(--border-strong); background: var(--hover); }
 
 .docker-stat .v { font-size: 16px; font-weight: 700; word-break: break-all; color: var(--text); }
@@ -1421,6 +1428,7 @@ html[data-theme="light"] {
     --red: #ff3b30;
     --orange: #ff9500;
     --cyan: #0b6b62;        /* 图表第二序列：比 --chart-line 明显暗一档 */
+    --purple: #8944ab;      /* 紫：Docker 统计卡第五色彩条（Apple 无障碍紫，白底可辨） */
     --ok-fg: #0a7d33;
     --err-fg: #d70015;
     --warn-fg: #a05a00;

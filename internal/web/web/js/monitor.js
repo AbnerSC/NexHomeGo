@@ -95,6 +95,9 @@ function monBody(t, override) {
 window.monForm = async (id) => {
     let t = { type: 'HTTP', method: 'GET', expect_status: 200, interval_sec: 60, timeout_sec: 10, fail_threshold: 2, enabled: 1, notify_on_recovery: 1 };
     if (id) t = (await api('GET', '/api/monitor/tasks')).find(x => x.id === id);
+    // STUN 穿透成功任务（有外网映射地址），供 TCP/UDP 探测目标快捷选择；拉取失败静默降级为仅手动输入
+    let stunTasks = [];
+    try { stunTasks = (await api('GET', '/api/stun/tasks')).filter(s => s.mapped_addr); } catch (e) { /* ignore */ }
     modal(id ? '编辑监控任务' : '新增监控任务', `
       <form id="monFormEl" class="form-grid">
         <div class="field"><label>任务名称 <b>*</b></label><input name="name" required value="${esc(t.name || '')}"></div>
@@ -104,6 +107,7 @@ window.monForm = async (id) => {
           </select></div>
         <div class="field full"><label>探测目标 <b>*</b></label>
           <input name="target" id="mTarget" required value="${esc(t.target || '')}" autocomplete="off">
+          <div id="mStunWrap" style="display:none;margin-top:6px"></div>
           <div class="small muted" id="mTargetHint"></div></div>
         <div class="field" id="mMethodField"><label>请求方法</label>
           <select name="method"><option ${t.method !== 'POST' ? 'selected' : ''}>GET</option><option ${t.method === 'POST' ? 'selected' : ''}>POST</option></select></div>
@@ -140,6 +144,25 @@ window.monForm = async (id) => {
                 ? 'UDP 需填写 host:port 格式，如 223.5.5.5:53（53 端口按标准 DNS 查询探测）。'
                 : 'TCP 需填写 host:port 格式，如 192.168.1.10:22。';
         }
+        // TCP/UDP 时展示「从 STUN 穿透选择」快捷下拉：仅列协议匹配且穿透成功（有外网映射地址）的任务，
+        // 无可选项整行隐藏，保留手动输入
+        const wrap = $('#mStunWrap');
+        if (!wrap) return;
+        const list = http ? [] : stunTasks.filter(s => s.protocol === type);
+        if (!list.length) { wrap.style.display = 'none'; wrap.innerHTML = ''; return; }
+        const cur = list.find(s => s.mapped_addr === target.value); // 编辑回显：目标恰为某映射地址时默认选中
+        wrap.style.display = '';
+        wrap.innerHTML = `
+          <select id="mStunPick" onchange="monStunPick(this.value)">
+            <option value="">选择 STUN 穿透任务...</option>
+            ${list.map(s => `<option value="${s.id}" ${cur && cur.id === s.id ? 'selected' : ''}>${esc(s.name)}（${esc(s.mapped_addr)}）</option>`).join('')}
+          </select>
+          <div class="small muted">选中后自动填入该穿透任务的外网映射地址，也可直接手动输入。</div>`;
+    };
+    // 下拉选中：把所选穿透任务的外网映射地址填入探测目标
+    window.monStunPick = val => {
+        const s = stunTasks.find(x => String(x.id) === val);
+        if (s) $('#mTarget').value = s.mapped_addr;
     };
     window.monTypeChanged(t.type);
 
