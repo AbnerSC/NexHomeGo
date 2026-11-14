@@ -1,26 +1,29 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Logs 全局操作日志：所有模块统一写入，同时输出控制台与 SQLite op_log 表，Web 端分页查询。
 // 模块常量保证日志可按模块过滤（值与 Java Logs 完全一致）。
 const (
-	LogSys     = "SYSTEM"
-	LogAuth    = "AUTH"
-	LogDdns    = "DDNS"
-	LogStun    = "STUN"
-	LogWol     = "WOL"
-	LogCert    = "CERT"
-	LogNav     = "NAV"
-	LogDocker  = "DOCKER"
+	LogSys      = "SYSTEM"
+	LogAuth     = "AUTH"
+	LogDdns     = "DDNS"
+	LogStun     = "STUN"
+	LogWol      = "WOL"
+	LogCert     = "CERT"
+	LogNav      = "NAV"
+	LogDocker   = "DOCKER"
 	LogProvider = "PROVIDER"
-	LogNotify  = "NOTIFY"
-	LogMonitor = "MONITOR"
-	LogProxy   = "PROXY"
+	LogNotify   = "NOTIFY"
+	LogMonitor  = "MONITOR"
+	LogProxy    = "PROXY"
 )
 
-func LogInfo(module, message string) { writeLog(module, "INFO", message) }
-func LogWarn(module, message string) { writeLog(module, "WARN", message) }
+func LogInfo(module, message string)  { writeLog(module, "INFO", message) }
+func LogWarn(module, message string)  { writeLog(module, "WARN", message) }
 func LogError(module, message string) { writeLog(module, "ERROR", message) }
 
 func writeLog(module, level, message string) {
@@ -34,9 +37,10 @@ func writeLog(module, level, message string) {
 	}
 }
 
-// LogPage 分页查询日志：page 从 1 开始，size 越界回退 50，module 空表示全部。
+// LogPage 分页查询日志：page 从 1 开始，size 越界回退 50，module/level 空表示不过滤，
+// q 非空时按内容模糊匹配（LIKE 参数化，无注入风险）。
 // 返回 {list,total,page,size}（字段名与 Java Logs.page 一致）。
-func LogPage(page, size int, module string) (*Row, error) {
+func LogPage(page, size int, module, level, q string) (*Row, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -44,14 +48,25 @@ func LogPage(page, size int, module string) (*Row, error) {
 		size = 50
 	}
 	offset := (page - 1) * size
-	where := ""
+	var conds []string
 	var args []interface{}
-	var countArgs []interface{}
 	if module != "" {
-		where = " WHERE module=?"
+		conds = append(conds, "module=?")
 		args = append(args, module)
-		countArgs = append(countArgs, module)
 	}
+	if level != "" {
+		conds = append(conds, "level=?")
+		args = append(args, level)
+	}
+	if q != "" {
+		conds = append(conds, "message LIKE ?")
+		args = append(args, "%"+q+"%")
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = " WHERE " + strings.Join(conds, " AND ")
+	}
+	countArgs := append([]interface{}(nil), args...)
 	args = append(args, size, offset)
 	rows, err := Query("SELECT id, time, module, level, message FROM op_log"+where+
 		" ORDER BY id DESC LIMIT ? OFFSET ?", args...)

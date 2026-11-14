@@ -132,9 +132,9 @@ async function renderSettings() {
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">修改登录密码</h3>
         <form id="pwdForm" class="form-grid">
-          <div class="field"><label>原密码 <b>*</b></label><input name="old_password" type="password" required></div>
-          <div class="field"><label>新密码 <b>*</b>（至少12位）</label><input name="new_password" type="password" required minlength="12"></div>
-          <div class="field"><label>确认新密码 <b>*</b></label><input name="confirm" type="password" required></div>
+          <div class="field"><label>原密码 <b>*</b></label><input name="old_password" type="password" required autocomplete="current-password"></div>
+          <div class="field"><label>新密码 <b>*</b>（至少12位）</label><input name="new_password" type="password" required minlength="12" autocomplete="new-password"></div>
+          <div class="field"><label>确认新密码 <b>*</b></label><input name="confirm" type="password" required autocomplete="new-password"></div>
           <div class="field" style="align-self:end"><button class="btn primary">修改密码</button></div>
         </form>
       </div>

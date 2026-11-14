@@ -195,14 +195,14 @@ func loginLockKey(c *Ctx) string {
 // ---------- 系统信息 / 日志 / 设置 / 备份 / 仪表盘 / 来源 ----------
 
 func registerSystemRoutes() {
-	// 全局日志（分页 + 模块过滤）
+	// 全局日志（分页 + 模块/级别过滤 + 内容搜索）
 	Route("GET", "/api/logs", func(c *Ctx) error {
 		page := parseIntDefault(c.Query("page"))
 		size := parseIntDefault(c.Query("size"))
 		if size == 0 {
 			size = 50
 		}
-		r, err := core.LogPage(page, size, c.Query("module"))
+		r, err := core.LogPage(page, size, c.Query("module"), c.Query("level"), c.Query("q"))
 		if err != nil {
 			return err
 		}

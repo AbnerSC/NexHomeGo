@@ -385,6 +385,11 @@ table { width: 100%; border-collapse: collapse; table-layout: fixed; }
 /* 固定布局下列宽不随内容扩展，单元格内超长徽标（如可用性自测结果）需允许换行 */
 td .badge { white-space: normal; word-break: break-all; }
 
+/* 组合名徽标按词折行（badge 的附加类 badge-wrap，如 Compose「项目/服务」）：
+   在连字符与零宽空格（JS 侧插入 U+200B）处自然断行而非逐字符硬切，
+   避免 "nex-h ome" 这类撕裂观感；超长无断点串仍兜底断词 */
+td .badge.badge-wrap { word-break: normal; overflow-wrap: break-word; line-height: 1.7; }
+
 /* 宽表格横向滚动：列内容总宽超过容器时不挤压列宽，改为出现横向滑动条（配合表格的 min-width） */
 .table-scroll { overflow-x: auto; }
 .table-scroll > table { margin-bottom: 0; }
@@ -1082,6 +1087,10 @@ code {
 
 .pager { display: flex; gap: 8px; align-items: center; margin-top: 12px; justify-content: flex-end; }
 
+/* 日志页码跳转：说明文字与窄输入框成组，避免被 .pager 的 flex 拉伸变形 */
+.log-jump { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.log-jump input { width: 64px; padding: 4px 8px; font-size: 12px; }
+
 /* ---------- Docker 模块 ---------- */
 .docker-stats {
     display: grid;
@@ -1315,8 +1324,9 @@ th.docker-sort:hover { color: var(--muted); }
     .metric-sub { display: none; }
 }
 
-@media (max-width: 860px) {
-    /* 窄屏上下堆叠，恢复整页滚动 */
+@media (max-width: 960px) {
+    /* 窄屏上下堆叠，恢复整页滚动（960px 起生效：平板竖屏等中等宽度也折叠侧边栏，
+       否则该区间侧边栏与内容互相挤压，顶栏指标条还会杂乱换行） */
     body { overflow: auto; }
     .layout { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
     .topbar { flex-wrap: wrap; }
@@ -1332,6 +1342,11 @@ th.docker-sort:hover { color: var(--muted); }
     #certSettingForm { grid-template-columns: 1fr; }
     #pwdForm { grid-template-columns: 1fr; }
     .px-pane { grid-template-columns: 1fr; }
+    /* 指标条换行到顶栏第二行后空间有限：间距与迷你进度条收窄，尽量保持单行排列 */
+    .sys-metrics { gap: 6px 18px; }
+    .metric-bar { width: 44px; }
+    /* 总览统计卡数值字号收缩：运行时长等长文案在窄屏不再把卡片撑得失衡 */
+    .dash-stat .v { font-size: 17px; }
 }
 
 /* ============ 反向代理中心模块 ============ */
@@ -1392,6 +1407,15 @@ th.docker-sort:hover { color: var(--muted); }
 /* 静态站点 zip 上传行：按钮 + 上传进度/文件名一行排布 */
 .px-zip { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .px-zip .small { flex: 1 1 220px; }
+
+/* 单行省略截断（代理站点行错误摘要等）：完整内容悬停 title 查看，
+   窄列内长文本不再竖排挤成多行（JS 侧生成 title 提供原文） */
+.px-err-snip {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* ============ 浅色主题（默认）：仅覆写变量层 ============
    基线（:root）为深色，此处换成白底 + 强调蓝；因所有颜色已收敛到变量，

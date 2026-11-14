@@ -92,9 +92,14 @@ window.ddnsForm = async (id) => {
     // 仅列出与任务服务商同类型的凭证配置（ALIYUN_DNS/ALIYUN_ESA -> ALIYUN；后续新服务商按前缀匹配），
     // 已引用的配置始终保留避免编辑时回显丢失
     const credType = (t.provider || 'ALIYUN_DNS').split('_')[0];
-    const credOpts = configs
-        .filter(c => (c.provider_type || 'ALIYUN') === credType || c.id === t.provider_config_id)
-        .map(c => `<option value="${c.id}" ${t.provider_config_id === c.id ? 'selected' : ''}>${esc(c.name)}（${esc(maskAk(c.access_key_id))}）</option>`).join('');
+    // 已引用的配置始终保留避免编辑时回显丢失；新增任务且同类型已有凭证时默认引用第一条，
+    // 免得每次新增都要手动把“手动填写 AccessKey”切换成已有凭证
+    const credList = configs.filter(c => (c.provider_type || 'ALIYUN') === credType || c.id === t.provider_config_id);
+    const defaultCredId = t.provider_config_id != null && t.provider_config_id !== ''
+        ? String(t.provider_config_id)
+        : (!id && credList.length ? String(credList[0].id) : '');
+    const credOpts = credList
+        .map(c => `<option value="${c.id}" ${String(c.id) === defaultCredId ? 'selected' : ''}>${esc(c.name)}（${esc(maskAk(c.access_key_id))}）</option>`).join('');
     modal(id ? '编辑同步任务' : '新增同步任务', `
       <form id="ddnsFormEl" class="form-grid">
         <div class="field"><label>任务名称 <b>*</b></label><input name="name" required value="${esc(t.name || '')}"></div>
@@ -219,7 +224,7 @@ window.ddnsForm = async (id) => {
     };
     window.ddnsProviderChanged(t.provider || 'ALIYUN_DNS', true);
     window.ddnsModeChanged(t.ip_mode || 'PUBLIC');
-    window.ddnsCredChanged(t.provider_config_id ? String(t.provider_config_id) : '', true);
+    window.ddnsCredChanged(defaultCredId, true);
     if ((t.provider || 'ALIYUN_DNS') === 'ALIYUN_ESA') ddnsLoadEsaSites();
     $('#ddnsFormEl').addEventListener('submit', async e => {
         e.preventDefault();

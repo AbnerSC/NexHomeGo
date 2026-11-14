@@ -293,6 +293,20 @@ function enhanceSelect(sel) {
     }).observe(sel, { childList: true, subtree: true, attributes: true });
 }
 
+/** 无障碍：.field 内的 label 与控件自动关联（项目表单从不显式写 for/id，
+    这里统一补齐：label 生成 for、控件生成 id，点击标签即可聚焦控件，读屏器也能朗读字段名）。
+    已有关联（label.htmlFor）或包裹式关联（控件在 label 内）的跳过；checkbox/radio/file
+    在本项目均为包裹式写法，不在关联范围。由下方 MutationObserver 在 DOM 变更后统一补扫。 */
+function enhanceLabels(root) {
+    root.querySelectorAll('.field').forEach(f => {
+        const label = f.querySelector(':scope > label');
+        const ctl = f.querySelector('input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea');
+        if (!label || !ctl || label.htmlFor || label.contains(ctl)) return;
+        if (!ctl.id) ctl.id = 'fld-' + Math.random().toString(36).slice(2, 9);
+        label.htmlFor = ctl.id;
+    });
+}
+
 // 全局扫描：innerHTML 重建的表单/页面中出现新 select 时自动增强（合并同一波的多次回调）
 let selScanQueued = false;
 new MutationObserver(() => {
@@ -302,6 +316,7 @@ new MutationObserver(() => {
         selScanQueued = false;
         if (SEL_OPEN.sel && !SEL_OPEN.sel.isConnected) closeSelect();   // 所属弹窗被整体重建时收起浮层
         $$('select:not([data-sel-enhanced])').forEach(enhanceSelect);
+        enhanceLabels(document);
     }, 0);
 }).observe(document.documentElement, { childList: true, subtree: true });
 

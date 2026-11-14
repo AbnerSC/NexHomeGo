@@ -15,10 +15,12 @@ function fmtDiagMB(mb) {
     return mb >= 1024 ? (mb / 1024).toFixed(2) + ' GB' : mb.toFixed(1) + ' MB';
 }
 
-/** 分解表的一行：标签 + 进度条（used/total）+ 文本值 */
-function diagBar(label, used, total, text, cls) {
+/** 分解表的一行：标签 + 进度条（used/total）+ 文本值。
+    neutral 为真时按构成占比展示、不按阈值告警着色（RSS 满格红色并无告警语义），统一青色；
+    仅“容器上限”这类真实健康比例才按占比着色（≥85% 红 / ≥60% 橙）。 */
+function diagBar(label, used, total, text, cls, neutral) {
     const pct = total > 0 ? Math.min(100, Math.round(Math.max(0, used) * 100 / total)) : 0;
-    const color = pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--orange)' : 'var(--cyan)';
+    const color = neutral ? 'var(--cyan)' : pct >= 85 ? 'var(--red)' : pct >= 60 ? 'var(--orange)' : 'var(--cyan)';
     return `<tr>
       <th>${esc(label)}</th>
       <td><div class="diag-track"><i style="width:${pct}%;background:${color}"></i></div></td>
@@ -130,7 +132,8 @@ function bindDiagChart() {
     });
 }
 
-/** 实时内存分解：进程 RSS 为进程视角（含共享页与未归还页），堆/栈/运行时为其构成参考 */
+/** 实时内存分解：RSS 为进程总占用（分母），堆/栈/Sys 为其构成占比（中性色，不表告警）；
+    仅“容器上限”行按真实占比着色，才是需要关注健康的指标 */
 function diagLive(s, rt) {
     const rss = Number(s.rss) > 0 ? Number(s.rss) : 0; // 作为堆/栈/运行时的分母（进程总占用视角）
     const lim = Number(s.memLimit); // 容器内存上限（MB），cgroup 不可读/无限制时为负
@@ -140,11 +143,11 @@ function diagLive(s, rt) {
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">当前实时内存</h3>
         <table>
-          ${diagBar('进程 RSS', rss, rss, fmtDiagMB(s.rss) + (s.rss < 0 ? '（非 Linux 不可读）' : '（进程总占用）'))}
+          ${diagBar('进程 RSS', rss, rss, fmtDiagMB(s.rss) + (s.rss < 0 ? '（非 Linux 不可读）' : '（进程总占用）'), '', true)}
           ${lim > 0 ? diagBar('容器上限', rss, lim, `${fmtDiagMB(s.rss)} / ${fmtDiagMB(lim)}`) : ''}
-          ${diagBar('Go 堆', s.heap, rss, `${fmtDiagMB(s.heap)} / 已申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`)}
-          ${diagBar('协程栈', s.stack, rss, fmtDiagMB(s.stack))}
-          ${diagBar('运行时合计（Sys）', s.sys, rss, fmtDiagMB(s.sys))}
+          ${diagBar('Go 堆', s.heap, rss, `${fmtDiagMB(s.heap)} / 已申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`, '', true)}
+          ${diagBar('协程栈', s.stack, rss, fmtDiagMB(s.stack), '', true)}
+          ${diagBar('运行时合计（Sys）', s.sys, rss, fmtDiagMB(s.sys), '', true)}
           <tr><th>协程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 协程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
         </table>
         <div class="small muted" style="margin-top:8px">

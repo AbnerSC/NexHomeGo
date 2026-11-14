@@ -35,7 +35,7 @@ async function refreshNotifyRows() {
           <td>${esc(l.channel || '-')}</td>
           <td class="small muted">${esc(l.event || '')}</td>
           <td>${esc(l.title || '')}</td>
-          <td>${badge(ok ? '成功' : '失败', ok ? 'ok' : 'err')}<span class="small muted"> ${esc(l.result || '')}</span></td>
+          <td title="${esc(l.result || '')}">${badge(ok ? '成功' : '失败', ok ? 'ok' : 'err')}${ok ? '' : `<span class="small muted px-err-snip" style="max-width:240px"> ${esc(String(l.result || '').slice(0, 60))}</span>`}</td>
         </tr>`;
     }).join('') || '<tr><td colspan="5" class="muted">暂无发送记录</td></tr>';
 }

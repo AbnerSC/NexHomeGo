@@ -83,11 +83,29 @@ function dockerHeader(ov) {
       </div>`;
 }
 
+const dockerFilter = { text: '', state: '' };   // 容器筛选状态：关键字 / 运行状态（仅容器列表页签生效）
+
+/** 更新筛选条件并本地重绘（不重新请求，输入不被打断）；轮询/排序仍走各自入口重绘 */
+window.dockerSetFilter = (k, v) => { dockerFilter[k] = v; paintDockerContainers(); };
+
 function dockerToolbar(ov) {
+    // 筛选控件仅容器列表页签展示；工具栏不随轮询重建，输入过程不被打断
+    const filters = dockerTab === 'containers' ? `
+        <input id="dkSearch" placeholder="搜索容器名称 / 镜像 / IP..." style="width:200px" oninput="dockerSetFilter('text', this.value)">
+        <select id="dkStateFilter" onchange="dockerSetFilter('state', this.value)">
+          <option value="">全部状态</option>
+          <option value="running">运行中</option>
+          <option value="exited">已退出</option>
+          <option value="paused">已暂停</option>
+          <option value="created">已创建</option>
+          <option value="restarting">重启中</option>
+          <option value="dead">异常</option>
+        </select>` : '';
     return `
       <div class="toolbar">
         <button class="btn ${dockerTab === 'containers' ? 'primary' : ''}" onclick="dockerSwitchTab('containers')">📦 容器列表</button>
         <button class="btn ${dockerTab === 'compose' ? 'primary' : ''}" onclick="dockerSwitchTab('compose')">🧩 Compose 项目</button>
+        ${filters}
         <div class="spacer"></div>
         <button class="btn danger" onclick="dockerPrunePrompt()">🧹 资源清理</button>
         <span class="muted small">连接：${esc(ov.host)}</span>
@@ -261,9 +279,19 @@ function dockerContainersTheadHtml() {
         </tr>`;
 }
 
-/** 容器表格 tbody 行（基于缓存 + 当前排序） */
+/** 容器表格 tbody 行（基于缓存 + 当前排序 + 筛选：关键字匹配名称/镜像/IP/Compose,状态下拉） */
 function dockerContainersRowsHtml() {
-    return dockerSorted().map(c => {
+    const kw = dockerFilter.text.trim().toLowerCase();
+    const list = dockerSorted().filter(c => {
+        if (dockerFilter.state && (c.state || '') !== dockerFilter.state) return false;
+        if (kw) {
+            const hay = [c.name, c.image, c.ip, c.shortId, c.composeProject, c.composeService]
+                .map(x => String(x || '')).join(' ').toLowerCase();
+            if (!hay.includes(kw)) return false;
+        }
+        return true;
+    });
+    return list.map(c => {
         const mem = c.memLimit != null && c.memLimit > 0
             ? `${fmtBytes(c.memUsed)} / ${fmtBytes(c.memLimit)}<div class="docker-mem-bar"><i style="width:${Math.min(100, (c.memUsed * 100 / c.memLimit)).toFixed(1)}%"></i></div>`
             : '<span class="muted">-</span>';
@@ -282,14 +310,16 @@ function dockerContainersRowsHtml() {
           ${c.network ? `<div class="muted small">${esc(c.network)}</div>` : ''}</td>
         <td>${ports || '<span class="muted">-</span>'}</td>
         <td>${c.composeProject
-            ? badge(esc(c.composeProject) + (c.composeService ? '/' + esc(c.composeService) : ''), 'info')
+            ? badge(esc(c.composeProject) + (c.composeService ? '\u200B/' + esc(c.composeService) : ''), 'info badge-wrap')
             : '<span class="muted">-</span>'}</td>
         <td><div style="display:flex;gap:5px;flex-wrap:wrap">
           ${dockerActions(c)}
           <button class="btn small" onclick="dockerDetail(${jsq(c.id)})">详情</button>
         </div></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="9" class="muted">暂无容器</td></tr>';
+    }).join('') || (dockerListCache.length
+        ? '<tr><td colspan="9" class="muted">没有匹配当前筛选条件的容器。</td></tr>'
+        : '<tr><td colspan="9" class="muted">暂无容器</td></tr>');
 }
 
 /** 排序/切换后用缓存只重绘表头箭头与数据行，不动统计卡/工具栏，也不重新请求 stats */
@@ -379,7 +409,7 @@ function dockerComposeRowsHtml(projects) {
         <td class="docker-mono small" style="word-break:break-all">${esc(p.workdir || '-')}</td>
         <td class="small" style="word-break:break-all">${esc(p.configFiles || '-')}</td>
         <td style="width:80px">${p.running}/${p.containers}</td>
-        <td>${(p.services || []).map(s => badge(esc(s), 'gray')).join(' ')}</td>
+        <td>${(p.services || []).map(s => badge(esc(s), 'gray badge-wrap')).join(' ')}</td>
         <td style="width:60px">${p.images.length}</td>
         <td style="width:170px"><div style="display:flex;gap:6px;flex-wrap:wrap">
           <button class="btn small" onclick="dockerProjectDetail(${jsq(p.name)})">查看容器</button>

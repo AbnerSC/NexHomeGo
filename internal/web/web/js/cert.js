@@ -121,6 +121,14 @@ window.certAutoRenew = async (id, checked) => {
     } catch (e) { toast(e.message, 'err'); }
 };
 
+/** ISO8601 -> 本地时区 “YYYY-MM-DD HH:mm:ss”（无效值原样返回，输出已转义） */
+function certFmtTime(iso) {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return esc(String(iso || ''));
+    const p = n => String(n).padStart(2, '0');
+    return esc(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`);
+}
+
 window.certDetail = async id => {
     try {
         const d = await api('GET', `/api/cert/tasks/${id}/detail`);
@@ -129,8 +137,8 @@ window.certDetail = async id => {
           <tr><th style="width:110px">主体</th><td class="small">${esc(d.subject)}</td></tr>
           <tr><th>颁发者</th><td class="small">${esc(d.issuer)}</td></tr>
           <tr><th>域名</th><td class="small">${d.domains.map(esc).join('，')}</td></tr>
-          <tr><th>生效时间</th><td class="small">${esc(d.notBefore)}</td></tr>
-          <tr><th>到期时间</th><td class="small">${esc(d.notAfter)}</td></tr>
+          <tr><th>生效时间</th><td class="small" title="原始值：${esc(d.notBefore)}（UTC）">${certFmtTime(d.notBefore)}（本地时区）</td></tr>
+          <tr><th>到期时间</th><td class="small" title="原始值：${esc(d.notAfter)}（UTC）">${certFmtTime(d.notAfter)}（本地时区）</td></tr>
           <tr><th>序列号</th><td class="small">${esc(d.serial)}</td></tr>
           <tr><th>SHA-256 指纹</th><td class="small" style="word-break:break-all">${esc(d.sha256)}</td></tr>
         </table>`);

@@ -42,15 +42,22 @@ async function refreshStunRows() {
 async function renderStun() {
     $('#pageBody').innerHTML = `
       <div class="tip">
-        <b>穿透通道支持承载 UDP / TCP / HTTP 数据传输；任务运行中 ≠ 外网可访问。</b>
-        受限锥形 NAT 仅允许已打洞的对端连入，<b>对称型（Symmetric）NAT 纯 STUN 无法穿透</b>，请改用路由器端口转发，并确认防火墙已放行监听端口。
-        穿透启动时自动尝试 <b>UPnP 端口映射</b>（WAN 口为公网时即权威入站通道）；CGNAT 或未启用 UPnP 时，TCP 任务按优先级自动选择出站通道：STUN 长连接精确映射 →
-        <b>双链路模式</b>（参考 natmap：公共端点出站保活 + 同端口 STUN 短连接探测精确映射，单事务型 STUN 服务器亦可复用）→ 端口保留兜底。
-        穿透成功后系统自动自测一次（映射保活 + 公网入站可达），可在操作列点「自测」手动复测。
-        启用 <b>ESA 同步</b>后，穿透成功与映射地址变化时会自动把映射 IP 写入 ESA 解析记录、映射端口写入回源 HTTPS 端口，
-        可在操作列点「ESA」手动补一次。
-        启用 <b>通知推送</b>后，穿透成功、映射地址变化以及<b>可用性自测确认失效（FAIL）</b>时，按任务勾选的渠道（在「告警通知」页集中维护，可多选）发送通知，
-        发送记录见「告警通知」页。
+        <ul style="margin:0;padding-left:18px">
+          <li><b>支持承载 UDP / TCP / HTTP；任务运行中 ≠ 外网可访问</b>，受限锥形 NAT 仅允许已打洞对端连入。</li>
+          <li><b>对称型（Symmetric）NAT 纯 STUN 无法穿透</b>，请改用路由器端口转发并放行防火墙监听端口。</li>
+          <li>启动时自动尝试 <b>UPnP 端口映射</b>（WAN 口为公网时即权威入站通道）；TCP 任务按优先级自动选择出站通道（见下方完整说明）。</li>
+          <li>穿透成功后自动自测一次，可点操作列「自测」复测；启用 <b>ESA 同步</b> / <b>通知推送</b> 后自动维护解析与告警（见下方完整说明）。</li>
+        </ul>
+        <details style="margin-top:8px">
+          <summary style="cursor:pointer;user-select:none;color:var(--link);list-style:revert">完整说明（出站通道优先级 / ESA 同步 / 通知推送）</summary>
+          <div style="margin-top:6px;line-height:1.8">
+            CGNAT 或未启用 UPnP 时，TCP 任务按优先级自动选择出站通道：STUN 长连接精确映射 →
+            <b>双链路模式</b>（参考 natmap：公共端点出站保活 + 同端口 STUN 短连接探测精确映射，单事务型 STUN 服务器亦可复用）→ 端口保留兑底。<br>
+            <b>ESA 同步</b>：穿透成功与映射地址变化时，自动把映射 IP 写入 ESA 解析记录、映射端口写入回源 HTTPS 端口，可在操作列点「ESA」手动补一次。<br>
+            <b>通知推送</b>：穿透成功、映射地址变化以及<b>可用性自测确认失效（FAIL）</b>时，按任务勾选的渠道（在「告警通知」页集中维护，可多选）发送通知，
+            发送记录见「告警通知」页。
+          </div>
+        </details>
       </div>
       <div class="toolbar"><div class="spacer"></div>
         <button class="btn" onclick="renderStunServers()">🛠 管理STUN服务器</button>

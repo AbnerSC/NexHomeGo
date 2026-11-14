@@ -64,6 +64,17 @@ async function renderProxy() {
       </div>
 
       <div class="toolbar">
+        <input id="pxSearch" placeholder="搜索站点名称 / 域名 / 后端..." style="width:220px" oninput="pxSetFilter('text', this.value)">
+        <select id="pxModeFilter" onchange="pxSetFilter('mode', this.value)">
+          <option value="">全部类型</option>
+          <option value="REVERSE">反向代理</option>
+          <option value="STATIC">静态站点</option>
+        </select>
+        <select id="pxEnabledFilter" onchange="pxSetFilter('enabled', this.value)">
+          <option value="">全部状态</option>
+          <option value="1">已启用</option>
+          <option value="0">已停用</option>
+        </select>
         <div class="spacer"></div>
         <button class="btn small" onclick="pxPurgeAll()">🧹 清空缓存</button>
         <button class="btn primary" onclick="pxForm()">＋ 新增站点</button>
@@ -125,19 +136,43 @@ function pxRenderListen(L) {
     el.innerHTML = '监听状态 ' + http + ' ' + https;
 }
 
-/** 仅刷新站点数据行（合并状态统计） */
+let pxSitesCache = [], pxStatusCache = [];   // 站点列表与状态统计缓存：筛选输入时本地过滤，不重新拉数据
+const pxFilter = { text: '', mode: '', enabled: '' };   // 站点筛选状态：关键字 / 类型 / 启用
+
+/** 更新筛选条件并本地重绘（不重新请求，输入不被打断）；轮询仍走 refreshProxyRows 更新缓存 */
+window.pxSetFilter = (k, v) => { pxFilter[k] = v; pxPaintRows(); };
+
+/** 仅刷新站点数据行（合并状态统计），随后按筛选条件重绘 */
 async function refreshProxyRows(preferedStatus) {
     const tbody = $('#pxTbody');
     if (!tbody) return;
-    const sites = await api('GET', '/api/proxy/sites');
+    pxSitesCache = await api('GET', '/api/proxy/sites');
     let status = preferedStatus;
     if (!status) {
         const st = await api('GET', '/api/proxy/status');
         status = st.sites || [];
     }
+    pxStatusCache = status || [];
+    pxPaintRows();
+}
+
+/** 按当前筛选条件渲染站点行（关键字匹配名称/域名/路径/后端，类型与启用状态下拉） */
+function pxPaintRows() {
+    const tbody = $('#pxTbody');
+    if (!tbody) return;
     const sm = {};
-    (status || []).forEach(s => sm[s.id] = s);
-    tbody.innerHTML = sites.map(s => {
+    pxStatusCache.forEach(s => sm[s.id] = s);
+    const kw = pxFilter.text.trim().toLowerCase();
+    const list = pxSitesCache.filter(s => {
+        if (pxFilter.mode && (s.mode || 'REVERSE') !== pxFilter.mode) return false;
+        if (pxFilter.enabled !== '' && Number(s.enabled === 1) !== Number(pxFilter.enabled)) return false;
+        if (kw) {
+            const hay = [s.name, s.domains, s.paths, s.target].map(x => String(x || '')).join(' ').toLowerCase();
+            if (!hay.includes(kw)) return false;
+        }
+        return true;
+    });
+    tbody.innerHTML = list.map(s => {
         const m = sm[s.id] || {};
         const cert = s.cert_mode === 'TASK' ? '指定' : s.cert_mode === 'NONE' ? 'HTTP' : '自动';
         const isStatic = (s.mode || 'REVERSE') === 'STATIC';
@@ -149,14 +184,16 @@ async function refreshProxyRows(preferedStatus) {
           <td class="small">${cert}${s.force_https ? '<div class="muted">强跳</div>' : ''}</td>
           <td class="small">${m.active ? '活跃 ' + m.active + ' · ' : ''}${(m.qpm || 0) + ' 次/分'}
             ${(m.errors || 0) > 0 ? `<div class="small" style="color:var(--err-fg)">${m.errors} 错误</div>` : ''}
-            ${m.lastError ? `<div class="small muted" title="${esc(m.lastError)}">最近: ${esc(String(m.lastError).slice(0, 28))}…</div>` : ''}</td>
+            ${m.lastError ? `<div class="small muted px-err-snip" title="${esc(m.lastError)}">最近: ${esc(m.lastError)}</div>` : ''}</td>
           <td><label class="switch"><input type="checkbox" ${s.enabled === 1 ? 'checked' : ''} onchange="pxToggle(${s.id}, this.checked)"><span class="slider"></span></label></td>
           <td>
             <button class="btn small" title="编辑" onclick="pxForm(${s.id})">✎</button>
             <button class="btn small danger" title="删除" onclick="pxDelete(${s.id}, ${jsq(s.name)})">🗑</button>
           </td>
         </tr>`;
-    }).join('') || '<tr><td colspan="7" class="muted">暂无代理站点，点击右上角「新增站点」添加。</td></tr>';
+    }).join('') || (pxSitesCache.length
+        ? '<tr><td colspan="7" class="muted">没有匹配当前筛选条件的站点。</td></tr>'
+        : '<tr><td colspan="7" class="muted">暂无代理站点，点击右上角「新增站点」添加。</td></tr>');
 }
 
 /* ---------------- 服务设置 ---------------- */
