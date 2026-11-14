@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"NexHomeGo/internal/core"
@@ -77,10 +78,23 @@ func serveRequest(w http.ResponseWriter, r *http.Request, https bool) {
 		sendSimple(w, 403, "来源 IP 不在白名单内: "+guardIp, "", "", true)
 		return
 	}
-	if adv.AuthUser != "" && !checkBasicAuth(r, adv) {
-		realm := "Basic realm=\"" + site.Name + "\""
-		sendSimple(w, 401, "需要 Basic 认证（"+site.Name+"）", "WWW-Authenticate", realm, true)
-		return
+	if adv.AuthUser != "" {
+		// BasicAuth 失败锁定：键为 TCP 对端（不可伪造，转发头与本判定无关），
+		// 防止凭据被在线无限爆破（已实测 50 次错误凭据零限速）。锁定期直接 429，
+		// 不再给出 WWW-Authenticate 挑战（避免诱导客户端立即重试）。
+		if remain := basicAuthLockedMs(peerIp); remain > 0 {
+			sendSimple(w, 429, "认证失败次数过多，已临时锁定，请约 "+
+				strconv.Itoa(int((remain+59_999)/60_000))+" 分钟后再试",
+				"Retry-After", strconv.Itoa(int((remain+999)/1000)), true)
+			return
+		}
+		if !checkBasicAuth(r, adv) {
+			baRecordFail(peerIp)
+			realm := "Basic realm=\"" + site.Name + "\""
+			sendSimple(w, 401, "需要 Basic 认证（"+site.Name+"）", "WWW-Authenticate", realm, true)
+			return
+		}
+		baReset(peerIp)
 	}
 	if adv.RateLimitRps > 0 && !bucketFor(site).tryAcquire() {
 		sendSimple(w, 429, "请求过于频繁（限流 "+gsonFloat(adv.RateLimitRps).String()+" QPS）",
@@ -198,8 +212,9 @@ func beginRelay(w http.ResponseWriter, r *http.Request, site *Site, upath, pathQ
 	}
 	fwd, err := http.NewRequestWithContext(r.Context(), r.Method, target, body)
 	if err != nil { // 方法名含非法字符等（典型为伪造请求）：按内部错误处理
+		// 明细（含目标地址解析结果）只入站点错误记录（管理员可见），错误页对访客给通用文案
 		noteError(site, "请求构造失败: "+err.Error())
-		sendErrorPage(w, 500, "请求构造失败: "+err.Error(), "", false)
+		sendErrorPage(w, 500, "内部错误：无法构造回源请求", "", false)
 		return
 	}
 	fwd.Host = r.Host // 原 Host 透传（对齐 nginx 默认 proxy_set_header Host $http_host）
@@ -328,29 +343,37 @@ func protoTag(https bool) string {
 	return "http"
 }
 
-// connectFailed 回源连接/传输失败：按 Java 阶段语义映射 504/502 并回错误页
+// connectFailed 回源连接/传输失败：按 Java 阶段语义映射 504/502 并回错误页。
+// 对外文案一律通用：err.Error() 含内网后端地址与操作系统错误原文，回显给匿名
+// 访客等于免费的内网拓扑测绘（已实测 502 错误页泄露 dial tcp 明细）；
+// 原始明细只入站点错误记录（noteError，管理员可见）。
 func connectFailed(site *Site, w http.ResponseWriter, err error) {
 	msg := err.Error()
 	var code int
 	var detail string
+	var page string
 	switch {
 	case strings.Contains(msg, "timeout awaiting response headers") || errors.Is(err, context.DeadlineExceeded):
 		code = 504
 		detail = "后端响应超时（" + strconv.Itoa(site.Adv.IdleSec) + " 秒无响应头）"
+		page = "后端响应超时，请稍后重试"
 	case strings.Contains(msg, "malformed HTTP"):
 		code = 502
 		detail = "后端响应报文非法: " + msg
+		page = "后端返回了无法解析的响应，请联系站点管理员"
 	case strings.Contains(msg, "EOF") || strings.Contains(msg, "connection reset"):
-		// 后端在响应前关闭连接（EOF/RST 且未收到响应头）
+		// 后端在响应前关闭连接（EOF/RST 且未收到响应头）；对外同样通用化，
+		// 避免「已接受连接但被拒」与「拒绝连接」的差异被用于探测内网端口状态
 		noteError(site, "后端在响应前关闭连接")
-		sendErrorPage(w, 502, "后端在响应前关闭了连接", "", false)
+		sendErrorPage(w, 502, "后端暂时无法访问，请稍后重试", "", false)
 		return
 	default:
 		code = 502
 		detail = "后端连接失败: " + msg
+		page = "后端暂时无法访问，请稍后重试"
 	}
 	noteError(site, detail)
-	sendErrorPage(w, code, detail, "", false)
+	sendErrorPage(w, code, page, "", false)
 }
 
 // serveCache 文件缓存命中直出：存头 + Content-Length（按大小）+ 新 Date + X-Cache: HIT
@@ -460,6 +483,99 @@ func checkBasicAuth(r *http.Request, adv *Advanced) bool {
 	user := subtle.ConstantTimeCompare([]byte(string(dec)[:i]), []byte(adv.AuthUser)) == 1
 	pass := subtle.ConstantTimeCompare([]byte(string(dec)[i+1:]), []byte(adv.AuthPass)) == 1
 	return user && pass
+}
+
+// ==================== BasicAuth 失败锁定 ====================
+// BasicAuth 常用于把内网服务经代理暴露到公网，凭据可被在线爆破且此前无任何限速。
+// 计数键为 TCP 对端地址（peerAddrOf，转发头与本判定无关、不可伪造），
+// 全站共享一个计数桶：对同一访客而言，逐站点尝试等价于逐凭据尝试。
+
+const (
+	basicAuthMaxFails    = 10   // 连续失败该次数后锁定该来源
+	basicAuthLockMinutes = 15   // 锁定时长
+	basicAuthMaxTracked  = 4096 // 计数桶容量上限（防内存放大）
+)
+
+type baFailState struct {
+	count       int
+	lockUntilMs int64
+}
+
+var (
+	baFailsMu sync.Mutex
+	baFails   = map[string]*baFailState{}
+)
+
+// basicAuthLockedMs 该来源 BasicAuth 锁定剩余毫秒数，0 表示未锁定（仅回收「锁定已过期」条目，
+// 未锁定但仍在计数的活跃条目不得删除，否则失败计数永远无法累加到阈值）。
+func basicAuthLockedMs(peer string) int64 {
+	if peer == "" {
+		return 0
+	}
+	baFailsMu.Lock()
+	defer baFailsMu.Unlock()
+	st := baFails[peer]
+	if st == nil {
+		return 0
+	}
+	now := nowMillis()
+	if st.lockUntilMs > now {
+		return st.lockUntilMs - now
+	}
+	if st.lockUntilMs > 0 {
+		delete(baFails, peer) // 锁定已过期：回收
+	}
+	return 0
+}
+
+// baRecordFail 记一次认证失败；累计达阈值进入锁定并写全局日志。
+func baRecordFail(peer string) {
+	if peer == "" {
+		return
+	}
+	baFailsMu.Lock()
+	defer baFailsMu.Unlock()
+	now := nowMillis()
+	st := baFails[peer]
+	if st == nil {
+		if len(baFails) >= basicAuthMaxTracked && !purgeBAFailsLocked(now) {
+			return // 计数表满且回收无果：丢弃本次计数（优先保证内存安全）
+		}
+		st = &baFailState{}
+		baFails[peer] = st
+	}
+	if st.lockUntilMs > now {
+		return // 已锁定不重复计数
+	}
+	st.count++
+	if st.count < basicAuthMaxFails {
+		return
+	}
+	st.lockUntilMs = now + int64(basicAuthLockMinutes)*60_000
+	st.count = 0
+	core.LogWarn(core.LogProxy, "BasicAuth 认证连续失败已达上限 (peer="+peer+"，锁定 "+
+		strconv.Itoa(basicAuthLockMinutes)+" 分钟)")
+}
+
+// baReset 认证成功：清除该来源的失败计数。
+func baReset(peer string) {
+	if peer == "" {
+		return
+	}
+	baFailsMu.Lock()
+	delete(baFails, peer)
+	baFailsMu.Unlock()
+}
+
+// purgeBAFailsLocked 回收一个未锁定条目（调用方持锁），返回是否腾出空位
+func purgeBAFailsLocked(now int64) bool {
+	for k, st := range baFails {
+		if st.lockUntilMs <= now {
+			delete(baFails, k)
+			return true
+		}
+	}
+	return false
 }
 
 // copyHeaders 头复制：剥离逐跳头与 Expect（含 Connection 头声明的附加逐跳头），保留其余

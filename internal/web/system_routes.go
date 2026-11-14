@@ -60,13 +60,16 @@ func registerAuthRoutes() {
 		}
 		// 失败计数与锁定的键：直连时只认 TCP 对端地址（c.PeerIP）；
 		// 面板挂在可信反代/CDN 后时改用「对端+真实客户端地址」（详见 loginLockKey）。
+		// peer 另行参与绝对桶计数（键=TCP 对端，不可伪造）：细分键含转发头、可被逐次
+		// 伪造换键，绝对桶保证单一对端的失败总次数仍有硬上限（详见 auth.Login）。
+		peer := c.PeerIP()
 		ip := loginLockKey(c)
-		if remain := auth.LockRemainingMs(ip); remain > 0 {
+		if remain := auth.LockRemainingMs(ip, peer); remain > 0 {
 			minutes := (remain + 59_999) / 60_000
 			c.Fail(http.StatusTooManyRequests, fmt.Sprintf("尝试过于频繁，已临时锁定，请约 %d 分钟后再试", minutes))
 			return nil
 		}
-		token, err := auth.Login(password, ip)
+		token, err := auth.Login(password, ip, peer)
 		if err != nil {
 			return err
 		}
@@ -171,12 +174,15 @@ func registerAuthRoutes() {
 // 面板部署在反向代理/CDN 后面时，所有请求的对端都是同一个代理地址，
 // 若仍以对端为唯一键，任意匿名者只要猜错若干次（默认 3 次）就能把
 // 全体用户（含管理员）一起锁在门外 30 分钟（已实测可复现）。
-// 因此当且仅当对端属于可信代理（security.trustedProxies / auto 策略下的回环与私网）时，
+// 因此当且仅当对端属于「显式可信代理」（security.trustedProxies 命中或策略 always）时，
 // 改用「对端 | 真实客户端地址」，让锁定只影响发起爆破的那一个客户端。
+// 不采用 auto 策略的回环/私网判定：内网或本机直连者自带伪造 X-Forwarded-For 即可
+// 逐次换键绕过细分桶（已实测可完全绕过登录锁定）——该场景的爆破兜底由 auth 的
+// 绝对桶（键=TCP 对端）承担，转发头只用于细分、不作为信任依据。
 // 前提：前置代理需覆盖/追写 X-Forwarded-For，而不是原样透传客户端自报值。
 func loginLockKey(c *Ctx) string {
 	peer := c.PeerIP()
-	if !core.TrustForwardedFrom(peer) {
+	if !core.TrustForwardedFromExplicit(peer, core.TrustProxyMode()) {
 		return peer
 	}
 	client := c.ClientIP()

@@ -46,6 +46,10 @@ const (
 	// 任何一个外部人员错输 10 次就能把该代理下的合法调用一起锁死 15 分钟。
 	// 抬高阈值后仍保留「伪造转发头绕不过 TCP 对端硬上限」的防爆破作用。
 	AccessTokenPeerMaxFails = AccessTokenMaxFails * 6
+	// LoginPeerMaxFails 登录失败绝对桶（TCP 对端）上限：为默认细分阈值的 10 倍。
+	// 登录细分桶的键含「真实客户端地址」（对端是可信代理时来自转发头），转发头可伪造，
+	// 逐次换键即可绕过细分桶；绝对桶以 TCP 对端为键提供不可绕过的失败硬上限。
+	LoginPeerMaxFails = defaultMaxFails * 10
 	// maxTrackedAccessIPs 每个计数桶的容量上限：防止海量来源把计数表本身变成内存放大面
 	maxTrackedAccessIPs = 4096
 	// accessFailIdleMs 接口令牌计数条目空闲回收阈值：超过该时长未再失败的未锁定条目直接回收
@@ -60,7 +64,12 @@ var (
 	tokens   = map[string]int64{} // token -> 过期时间戳(ms)
 
 	failsMu sync.Mutex
-	fails   = map[string]*failState{} // ip -> 失败/锁定状态
+	fails   = map[string]*failState{} // 登录失败细分桶：键为锁定键（直连=对端地址；可信代理后=对端|真实客户端）
+
+	// 登录失败绝对桶：键为 TCP 对端地址（不可伪造）。细分键可因转发头被逐次更换，
+	// 绝对桶保证任何单一对端的失败总次数仍有硬上限（与接口令牌双桶同源的设计）。
+	peerFailsMu sync.Mutex
+	peerFails   = map[string]*failState{} // peer -> 登录失败绝对桶
 
 	// 接口令牌校验失败计数（双桶）与登录失败计数分开：
 	//   - atPeerFails：绝对桶，键为 TCP 对端地址（不可伪造），任何来源的失败硬上限；
@@ -103,8 +112,9 @@ func Init() error {
 
 // Login 登录校验（含失败锁定与单点登录）。成功返回 token；密码错误返回空串。
 // 调用方应先经 LockRemainingMs 拦截锁定态。
-// ip 必须是连接对端地址（Ctx.PeerIP），不得使用客户端可伪造的转发头，否则本轮计数可被绕过。
-func Login(password, ip string) (string, error) {
+// lockKey 为失败细分桶的键（见 web.loginLockKey）；peer 为连接对端地址（Ctx.PeerIP），
+// 两者都不得使用客户端可伪造的转发头单独充当判定依据，否则本轮计数可被绕过。
+func Login(password, lockKey, peer string) (string, error) {
 	hash, err := core.GetConfig(KeyPassword)
 	if err != nil {
 		return "", err
@@ -115,8 +125,11 @@ func Login(password, ip string) (string, error) {
 			return "", err
 		}
 		failsMu.Lock()
-		delete(fails, ip)
+		delete(fails, lockKey)
 		failsMu.Unlock()
+		peerFailsMu.Lock()
+		delete(peerFails, peer)
+		peerFailsMu.Unlock()
 		// 单点登录：新登录自动注销其余会话。
 		tokensMu.Lock()
 		tokens = map[string]int64{token: time.Now().UnixMilli() + tokenTTLms}
@@ -124,18 +137,18 @@ func Login(password, ip string) (string, error) {
 		core.LogInfo(core.LogAuth, "用户登录成功")
 		return token, nil
 	}
-	recordFailure(ip)
-	core.LogWarn(core.LogAuth, "登录失败：密码错误 (IP="+ip+")")
+	recordFailure(lockKey, peer)
+	core.LogWarn(core.LogAuth, "登录失败：密码错误 (IP="+lockKey+")")
 	return "", nil
 }
 
-func recordFailure(ip string) {
+func recordFailure(lockKey, peer string) {
 	max, _ := GetMaxFails()
 	failsMu.Lock()
-	st := fails[ip]
+	st := fails[lockKey]
 	if st == nil {
 		st = &failState{}
-		fails[ip] = st
+		fails[lockKey] = st
 	}
 	now := time.Now().UnixMilli()
 	if st.lockUntilMs > now {
@@ -148,25 +161,54 @@ func recordFailure(ip string) {
 		st.lockUntilMs = now + int64(minutes)*60_000
 		st.count = 0
 		failsMu.Unlock()
-		core.LogWarn(core.LogAuth, ipStr(max, minutes, ip))
+		core.LogWarn(core.LogAuth, ipStr(max, minutes, lockKey))
 		if NotifyBroadcast != nil {
 			NotifyBroadcast("auth.lockout", "登录安全锁定",
-				"来源 IP "+ip+" 连续登录失败 "+itoa(max)+" 次，已锁定 "+itoa(minutes)+" 分钟。")
+				"来源 IP "+lockKey+" 连续登录失败 "+itoa(max)+" 次，已锁定 "+itoa(minutes)+" 分钟。")
 		}
+	} else {
+		failsMu.Unlock()
+	}
+	// 绝对桶（TCP 对端）：不可伪造的失败硬上限，先于细分桶打满即整体锁定。
+	peerFailsMu.Lock()
+	pst := peerFails[peer]
+	if pst == nil {
+		pst = &failState{}
+		peerFails[peer] = pst
+	}
+	if pst.lockUntilMs > now {
+		peerFailsMu.Unlock()
 		return
 	}
-	failsMu.Unlock()
+	pst.count++
+	if pst.count >= LoginPeerMaxFails {
+		minutes, _ := GetLockMinutes()
+		pst.lockUntilMs = now + int64(minutes)*60_000
+		pst.count = 0
+		peerFailsMu.Unlock()
+		core.LogWarn(core.LogAuth, "登录失败绝对上限已触发 (peer="+peer+"，"+itoa(LoginPeerMaxFails)+" 次失败，锁定 "+itoa(minutes)+" 分钟)")
+		return
+	}
+	peerFailsMu.Unlock()
 }
 
-// LockRemainingMs 该 IP 剩余锁定毫秒数，0 表示未锁定。
-func LockRemainingMs(ip string) int64 {
+// LockRemainingMs 该锁定键剩余锁定毫秒数，0 表示未锁定。
+// 取细分桶与绝对桶（TCP 对端）的较大值：任一桶触发锁定即整体拒绝。
+func LockRemainingMs(lockKey, peer string) int64 {
+	now := time.Now().UnixMilli()
 	failsMu.Lock()
-	defer failsMu.Unlock()
-	st := fails[ip]
-	if st == nil {
-		return 0
+	remain := int64(0)
+	if st := fails[lockKey]; st != nil {
+		remain = st.lockUntilMs - now
 	}
-	remain := st.lockUntilMs - time.Now().UnixMilli()
+	failsMu.Unlock()
+	peerFailsMu.Lock()
+	if pst := peerFails[peer]; pst != nil {
+		if r := pst.lockUntilMs - now; r > remain {
+			remain = r
+		}
+	}
+	peerFailsMu.Unlock()
 	if remain < 0 {
 		return 0
 	}
