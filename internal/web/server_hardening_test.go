@@ -136,9 +136,9 @@ func TestAuthBodyLimit(t *testing.T) {
 // TestRedirectHost 强制 HTTPS 跳转的 Location 不得直接采信任意 Host（开放重定向 / 头注入）。
 func TestRedirectHost(t *testing.T) {
 	cases := map[string]string{
-		"panel.lan:8090":    "panel.lan",
-		"192.168.1.10:8090": "192.168.1.10",
-		"[::1]:8090":        "::1",
+		"panel.lan:15656":    "panel.lan",
+		"192.168.1.10:15656": "192.168.1.10",
+		"[::1]:15656":        "::1",
 	}
 	for host, want := range cases {
 		r := httptest.NewRequest("GET", "/x", nil)

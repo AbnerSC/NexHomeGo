@@ -1,0 +1,100 @@
+# =====================================================================
+# NexHome｜联枢 绿联 NAS（UGOS Pro）应用配置文件 —— 方案 A
+#
+# 形态：Docker 应用（bridge 网络 + 15656 端口映射，不挂载 docker.sock）
+# 规范：spec_version 2.1，详见官方文档
+#   https://developer.ugnas.com/doc/tools/project-yaml.html
+#
+# 上架前必查（TODO）：
+#   1. app_id 中的组织名（abnersc）请替换为你的组织英文小写名——上架后不可修改；
+#   2. version 与 internal/core.Version、compose 镜像 tag 保持一致；
+#   3. 取消 privacy_policy_link 注释并替换为真实隐私政策 HTTPS 静态页；
+#   4. rootfs_common/icon.png 必须为正式图标（256x256 PNG）。
+# =====================================================================
+
+# 配置规范版本（当前为 2.1）
+spec_version: "2.1"
+# 应用 ID，格式 com.组织英文名.应用名，上架后不可修改
+app_id: com.abnersc.docker.nexhome
+# 应用版本号 x.y.z（与 internal/core.Version 对齐；打包时 --build 追加构建号）
+version: 2.1.1
+# 支持的 CPU 架构（镜像已具备双架构能力）
+support_arch:
+  - amd64
+  - arm64
+# 产品线：nasync（绿联 NAS）；HomeAgent 需另行与绿联确认后再添加
+product_series:
+  - nasync
+# 支持的客户端类型（默认 app、pc）
+supports:
+  - app
+  - pc
+# Docker 应用必须为 true（打包时自动生成对 com.ugreen.docker 的强依赖）
+is_docker_app: true
+# 运维类工具，仅管理员可访问
+only_admin: true
+# 应用后端服务监听端口：与 compose 端口映射、系统健康探测三方一致，勿改
+port: 15656
+# 自带完整 Web 界面与登录体系，浏览器新标签页打开（不集成 UGOS JSSDK）
+open_type: tab
+# 应用类别：实用工具
+tag_types:
+  - utility
+# 依赖的 UGOS Pro 最低固件版本（测试机最低要求 1.13.0.0000）
+depend_fw_version: 1.13.0.0000
+# Docker 应用必填：依赖的 Docker 套件最低版本
+depend_docker_version: 1.7.0.0000
+
+# ---- 开源合规（MIT 开源项目，上架时必填）----
+# 使用了开源代码：以下两项必填
+license_agreement_link:
+  - https://github.com/AbnerSC/NexHomeGo/blob/main/LICENSE
+source_code_link:
+  - https://github.com/AbnerSC/NexHomeGo
+# 隐私政策：HTTPS 静态页直达（无需登录/注册/跳转）。上架前取消注释并替换：
+# privacy_policy_link:
+#   - https://github.com/AbnerSC/NexHomeGo/blob/main/docs/PRIVACY.md
+technical_support_link:
+  - https://github.com/AbnerSC/NexHomeGo/issues
+
+# ---- 安装参数（注入 compose 变量，key 与 ${VAR} 一致）----
+parameters:
+  # 数据持久化目录：用户安装时选择，挂载到容器 /app/data
+  # （配置 nexhome.properties、SQLite nexhome.db、日志、证书均落在此目录）
+  - key: DATA_PATH
+    type: path
+    required: true
+    changeable: false
+    i18n:
+      en-US:
+        name: Data Directory
+        description: Directory for config, database and logs (mounted to /app/data)
+      zh-CN:
+        name: 数据目录
+        description: 应用配置、数据库与日志的持久化目录（将挂载到容器 /app/data）
+
+# ---- 应用展示信息（en-US 为兜底语言，必须保留）----
+i18n:
+  en-US:
+    name: NexHome
+    description: >-
+      All-in-one home network guardian: DDNS sync, STUN NAT traversal,
+      WOL wake-on-LAN, SSL certificate automation, website navigation,
+      Docker container management, service monitoring and unified alerts.
+      Single lightweight process, all data stored locally.
+    author: AbnerSC
+    official: https://github.com/AbnerSC/NexHomeGo
+    help: https://github.com/AbnerSC/NexHomeGo/blob/main/README.md
+    publisher: AbnerSC
+    publisher_link: https://github.com/AbnerSC
+  zh-CN:
+    name: NexHome｜联枢
+    description: >-
+      一站式内网节点守护工具：DDNS 域名同步、STUN 端口穿透、WOL 网络唤醒、
+      SSL 证书自动申请续期、网站导航、Docker 容器管理运维、服务可用性监控、
+      统一告警通知与状态仪表盘。单进程轻量服务，数据全部本地存储。
+    author: AbnerSC
+    official: https://github.com/AbnerSC/NexHomeGo
+    help: https://github.com/AbnerSC/NexHomeGo/blob/main/README.md
+    publisher: AbnerSC
+    publisher_link: https://github.com/AbnerSC

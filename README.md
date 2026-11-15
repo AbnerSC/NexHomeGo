@@ -39,7 +39,7 @@ services:
       nofile: { soft: 65535, hard: 65535 }
     healthcheck:
       # 探活方式用 bash /dev/tcp 探测端口（仅验证端口可连，不依赖额外工具）
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8090 && echo -n '' >&3"]
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/15656 && echo -n '' >&3"]
       interval: 10s
       timeout: 3s
       retries: 3
@@ -54,7 +54,7 @@ docker compose up -d
 
 使用说明：
 
-- 启动后访问：**http://127.0.0.1:8090**（默认端口）
+- 启动后访问：**http://127.0.0.1:15656**（默认端口）
 - 首次启动自动生成配置文件 `nexhome.properties`、数据库 `data/nexhome.db`
 - **登录密码**：首次启动由系统**随机生成高强度初始密码并打印到控制台**（形如 `首次启动，已生成随机初始密码……`，16 位含大小写/数字/符号），
   请从控制台日志读取并登录后**立即在「系统设置 → 修改登录密码」中更换**；系统不存在任何固定的默认密码

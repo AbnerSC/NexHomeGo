@@ -62,7 +62,7 @@ jobs:
     name: 构建并推送镜像到 Nexus
     # labels 必须与 act_runner 注册的标签一致（沿用 Java 侧同一 runner：
     # 任务只调用 docker CLI，编译在容器内完成，与语言环境无关）
-    runs-on: golang
+    runs-on: base
     timeout-minutes: 60
     steps:
       - name: 检出代码

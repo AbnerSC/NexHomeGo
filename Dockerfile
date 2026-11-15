@@ -13,7 +13,7 @@
 # 本地手动构建多架构镜像：
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -t nex-home:latest --push .
-# 本机单架构调试可直接：docker build -t nex-home . && docker run -p 8090:8090 nex-home
+# 本机单架构调试可直接：docker build -t nex-home . && docker run -p 15656:15656 nex-home
 # 模块代理默认不注入（GitHub Actions / 本地直连 Go 官方 proxy.golang.org）；
 # 国内环境构建（Gitea Actions）显式注入加速依赖下载：
 #   --build-arg GOPROXY=https://goproxy.cn,direct
@@ -81,5 +81,5 @@ COPY --from=build /out/nexhome ./nexhome
 # 部署时挂载数据卷持久化： -v /srv/nexhome/data:/app/data
 RUN mkdir -p /app/data
 
-EXPOSE 8090
+EXPOSE 15656
 ENTRYPOINT ["./nexhome"]

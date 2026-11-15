@@ -39,7 +39,7 @@ async function renderDocker() {
             <p class="muted" style="line-height:2">${esc(ov.error || '')}</p>
             <p class="muted" style="margin-top:10px;line-height:2">
               Docker 部署本服务时挂载宿主机 socket 文件并授予访问权限：<br>
-              <code class="docker-mono">docker run -d -p 8090:8090 -v /var/run/docker.sock:/var/run/docker.sock -v nexhome-data:/app/data nex-home</code><br>
+              <code class="docker-mono">docker run -d -p 15656:15656 -v /var/run/docker.sock:/var/run/docker.sock -v nexhome-data:/app/data nex-home</code><br>
               裸机 / 群晖等环境可通过环境变量 <b>DOCKER_HOST</b> 指定
               <code>unix:///var/run/docker.sock</code> 或 <code>tcp://127.0.0.1:2375</code>
             </p>

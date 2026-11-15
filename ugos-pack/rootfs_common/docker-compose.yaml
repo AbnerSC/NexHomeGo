@@ -1,0 +1,45 @@
+# =====================================================================
+# NexHome｜联枢 绿联 NAS UPK —— docker-compose（方案 A：bridge + 端口映射）
+#
+# 官方约束：
+#   - image 必须与 rootfs_{arch}/images/ 内 tar 的镜像 tag 完全一致，禁止 latest；
+#     注意：buildx/docker save 会把 docker.io 前缀归一化掉，tar 内 tag 是
+#     babyfly/nex-home:{version}（不带 docker.io），此处请保持一致勿手加前缀；
+#   - 只能引用 project.yaml parameters 声明的 key 或内置变量（当前仅 TZ）；
+#   - 禁止 privileged / cap_add / host pid / host ipc（打包时检测告警）。
+#
+# 切换方案 B（host 网络 + docker.sock，STUN 穿透与 Docker 管理功能完整，
+# 需先与绿联商务确认放行）：
+#   1. network_mode: bridge → host，并删除整段 ports；
+#   2. 取消 volumes 中 docker.sock 挂载与 DOCKER_HOST 环境变量的注释。
+# =====================================================================
+services:
+  nex-home:
+    # 与 rootfs_{arch}/images/nex-home-{version}-{arch}.tar 的 tag 一致（由 pack 脚本保证）
+    image: babyfly/nex-home:2.1.1
+    container_name: nex-home
+    restart: unless-stopped
+    network_mode: bridge
+    ports:
+      - "15656:15656"            # 必须与 project.yaml 的 port 一致
+    volumes:
+      - ${DATA_PATH}:/app/data # 安装参数：用户选择的数据持久化目录
+      # - /var/run/docker.sock:/var/run/docker.sock   # 方案 B：启用 Docker 容器管理模块
+    environment:
+      - TZ=${TZ}               # 内置变量：系统安装时自动注入时区
+      # - DOCKER_HOST=unix:///var/run/docker.sock     # 方案 B：配合 sock 挂载使用
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    healthcheck:
+      # 运行镜像为 debian:bookworm-slim（自带 bash），用 /dev/tcp 探测端口，不依赖额外工具
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/15656 && echo -n '' >&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 20s

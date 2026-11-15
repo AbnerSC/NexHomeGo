@@ -1,0 +1,4 @@
+# ugcli 打包产物（UPK 与中间目录）
+build_dir/
+# 镜像导出文件（体积大，由 pack 脚本现场生成）
+*.tar

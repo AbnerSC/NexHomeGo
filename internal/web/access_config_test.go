@@ -104,7 +104,7 @@ func TestServeHTTPNoRedirectWhenHTTPSInactive(t *testing.T) {
 	oldCfg, oldCert := currentCfg, activeCertID
 	t.Cleanup(func() { currentCfg, activeCertID = oldCfg, oldCert })
 
-	currentCfg = &Snapshot{HTTPPort: 8090, HTTPSEnabled: true, HTTPSPort: 8443, HTTPSRedirect: true}
+	currentCfg = &Snapshot{HTTPPort: 15656, HTTPSEnabled: true, HTTPSPort: 8443, HTTPSRedirect: true}
 	activeCertID = -1 // 证书解析失败/端口占用的降级态
 
 	rec := httptest.NewRecorder()

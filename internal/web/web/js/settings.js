@@ -60,7 +60,7 @@ async function renderSettings() {
           进程启动时若端口已被占用，会自动改用备选端口继续提供面板（实际端口与原因见 HTTP 端口下方红字提示），不会改写此处配置值。</div>
         <form id="accessForm" class="form-grid">
           <div class="field"><label>HTTP 端口 <b>*</b></label>
-            <input name="port" type="number" min="1" max="65535" required value="${ws.port ?? 8090}">
+            <input name="port" type="number" min="1" max="65535" required value="${ws.port ?? 15656}">
             ${ws.boundPort && ws.boundPort !== ws.port
               ? `<div class="small" style="color:var(--err-fg)">当前实际监听 ${esc(ws.boundPort)}（配置端口被占用，启动时已临时改用）</div>` : ''}</div>
           <div class="field"><label>HTTPS</label>

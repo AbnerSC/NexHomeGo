@@ -31,7 +31,7 @@ const (
 	keyPort          = "server.port"
 	keyPortFallback  = "server.port.autoFallback"
 	keyWebDir        = "server.web.dir"
-	defaultPort      = 8090
+	defaultPort      = 15656
 	defaultFallback  = 5
 	defaultConfigCom = "NexHome configuration. server.port: Web service port." +
 		" server.port.autoFallback: startup port self-healing span, 0 = random port only." +
@@ -51,8 +51,8 @@ func InitPaths() error {
 }
 
 // WorkDir / DataDir / ConfigFile 暴露目录（供证书、图标、备份等落盘收敛到 data 下）。
-func WorkDir() string   { return workDir }
-func DataDir() string   { return dataDir }
+func WorkDir() string    { return workDir }
+func DataDir() string    { return dataDir }
 func ConfigFile() string { return configFile }
 
 // LoadConfig 加载配置，文件不存在则写入默认配置。
@@ -99,7 +99,7 @@ func getProperty(key, def string) string {
 	return def
 }
 
-// Port Web 服务端口，默认 8090。
+// Port Web 服务端口，默认 15656。
 func Port() int {
 	if p, err := strconv.Atoi(getProperty(keyPort, "")); err == nil && p > 0 {
 		return p
