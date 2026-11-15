@@ -1,26 +1,27 @@
-/* ============ NexHome 全局样式：素净双主题（默认浅色 / 可切深色） ============
-   设计语言：页面淡蓝灰底 + 卡片纯白 + 1px 蓝灰发丝线分区 + 深蓝灰正文，
-   中性色不用纯灰（避免黑白感），统一带淡蓝调与品牌蓝同色相族；
+/* ============ NexHome 全局样式：液态玻璃双主题（iOS 26 Liquid Glass 风格，默认浅色 / 可切深色） ============
+   设计语言：柔和极光底色（页面光斑作折射源）+ 半透明玻璃卡片（backdrop-filter 背景折射）
+   + 顶部受光高光 / 底部厚边暗影（inset 边缘光）+ 连续大圆角 + 轻悬浮投影；
+   玻璃只上「浮层与容器」（侧栏/顶栏/面板/模态/Toast/磁贴），表格与表单等内容层保持高可读；
    颜色只留一颗品牌蓝（#0071e3）做实底与线条，状态用 Apple system 鲜亮语义色（绿/红/橙/青）。
-   明确不使用：渐变、发光阴影、毛玻璃(backdrop-filter)、极光背景、任何动画与过渡。
-   层级靠四件事表达：底色明度差、边框、字重、强调色；标题带蓝色指示条，按钮/重点提示以对比度优先。
+   玻璃三要素：半透明底（--panel 系 rgba）+ 背景折射（--glass-filter）+ 边缘光（--glass-hi 顶亮 / --glass-lo 底暗），
+   双层降级：不支持 backdrop-filter 或系统开启「减少透明度」（prefers-reduced-transparency）时回退实底。
    用色约定：实色 token（--accent/--green/--red/--orange/--cyan）只上底色、描边、指示条、图表线；
-   文字一律走 --link 或 --*-fg（同色相深/浅一阶），否则鲜亮色在纯白或深底上都会跌破 WCAG AA。
+   文字一律走 --link 或 --*-fg（同色相深/浅一阶），否则鲜亮色在玻璃底上会跌破 WCAG AA。
    主题开关集中在变量层：:root 为深色基线，文件末尾 html[data-theme="light"] 只覆写变量。 */
 :root {
     /* 深色渲染原生控件（下拉箭头、数字步进器、复选框等），与主题底色一致 */
     color-scheme: dark;
 
-    /* 底色与层次。中性色一律不用纯灰，而是带蓝调的深蓝灰（与品牌蓝同色相族），
-       避免整屏黑白感；层次靠“明度差 + 1px 细线”表达，亮度与纯灰方案持平不影响对比度 */
-    --bg: #131a22;           /* 页面底 */
-    --bg-2: #1a232e;         /* 表头 / 弹窗头 / 分区底 */
-    --panel: #1a232e;        /* 卡片实底色 */
-    --panel-glass: #26313f;  /* 普通按钮 / 控件实底 */
-    --hover: #26313f;        /* 行 / 按钮 / 磁贴悬停底 */
-    --input-bg: #202b38;     /* 输入框底 */
-    --border: #31404f;
-    --border-strong: #4b5c6e;
+    /* 底色与层次：面板改为半透明「玻璃底」，叠在极光光斑上形成折射感；
+       中性色延续蓝灰族（与品牌蓝同色相），半透明合成后的明度与原实底方案持平，对比度不降 */
+    --bg: #10161e;           /* 页面底（极光光斑的画布） */
+    --bg-2: rgba(32, 43, 56, .55);      /* 表头 / 弹窗头 / 分区底（半透明玻璃） */
+    --panel: rgba(26, 35, 46, .62);     /* 卡片玻璃底 */
+    --panel-glass: rgba(38, 49, 63, .55);  /* 普通按钮 / 控件玻璃底 */
+    --hover: rgba(56, 70, 88, .5);      /* 行 / 按钮 / 磁贴悬停底 */
+    --input-bg: rgba(32, 43, 56, .55);  /* 输入框底 */
+    --border: rgba(120, 150, 180, .16);
+    --border-strong: rgba(140, 170, 200, .30);
     --text: #e9eef5;
     --muted: #9aaaba;
     
@@ -57,23 +58,35 @@
     --info-bd: rgba(100, 210, 255, .4);
     --gray-bd: rgba(154, 170, 186, .32);
     
-    /* 历史别名：docker.js 等内联样式仍按旧变量名引用，取值收敛到对应语义色 */
+    /* 历史别名：docker.js 等内联样式仍按旧变量名引用，取值收敛到对应语义色；
+       --panel-solid 保持实色（原生 select 弹出菜单不吃玻璃） */
     --panel-solid: #26313f;
-    --code-bg: #202b38;
+    --code-bg: rgba(16, 22, 30, .55);
     --err-soft-bg: rgba(255, 69, 58, .14);
     --err-soft-border: rgba(255, 69, 58, .42);
     
-    /* 圆角：卡片 12px、控件 8px、按钮胶囊（Apple 用 980px）；卡片无投影，仅浮层有轻投影 */
-    --radius: 0px;
-    --radius-sm: 0px;
+    /* 圆角：连续大圆角（iOS 连续曲率）—— 面板/卡片 16px、内部小块 10px、登录卡/模态 22px；玻璃带轻悬浮投影 */
+    --radius: 16px;
+    --radius-sm: 10px;
+    --radius-lg: 22px;
     --radius-pill: 980px;
     --radius-input: 10px;    /* 输入框/下拉/文本域圆角 */
     /* 下拉自绘箭头（appearance:none 后由 background-image 提供，深色取 --muted 色） */
     --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239aaaba' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
-    --shadow-pop: 0 6px 20px rgba(0, 0, 0, .45);
-    
+
+    /* 液态玻璃材质 token：折射滤镜 / 玻璃描边与边缘光 / 悬浮投影 / 极光光斑 */
+    --glass-filter: blur(18px) saturate(160%);
+    --glass-edge: rgba(148, 180, 210, .20);   /* 玻璃外描边（折射亮线） */
+    --glass-hi: rgba(255, 255, 255, .10);     /* 顶部内高光（受光边） */
+    --glass-lo: rgba(5, 9, 15, .32);          /* 底部内暗边（厚边折射） */
+    --glass-drop: rgba(3, 7, 12, .40);        /* 玻璃悬浮投影 */
+    --blob-1: rgba(10, 132, 255, .28);        /* 极光光斑：品牌蓝（深底需更浓才透得出玻璃） */
+    --blob-2: rgba(99, 91, 235, .22);         /* 极光光斑：紫 */
+    --blob-3: rgba(64, 200, 220, .17);        /* 极光光斑：青 */
+    --shadow-pop: 0 16px 48px rgba(3, 8, 14, .5);
+
     /* 图表 / 进度条：--chart-line 为折线主线与条形填充色，面积填充靠 fill-opacity 淡化 */
-    --bar-track: #31404f;
+    --bar-track: rgba(140, 170, 200, .16);
     --chart-line: #2997ff;
     
     /* 导航首页背景图：由首页内联样式按配置覆盖（url('...')），默认无背景 */
@@ -97,11 +110,40 @@ body {
     overflow: hidden;
 }
 
+/* 极光光斑层：液态玻璃的「折射源」。固定定位不随滚动，radial-gradient 柔和色斑，
+   backdrop-filter 模糊时把光斑一并折射，玻璃卡片因此有色温渐变而非一片死灰 */
+body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    background:
+        radial-gradient(40rem 40rem at 10% -12%, var(--blob-1), transparent 62%),
+        radial-gradient(36rem 36rem at 108% 12%, var(--blob-2), transparent 62%),
+        radial-gradient(44rem 44rem at 50% 118%, var(--blob-3), transparent 62%);
+    pointer-events: none;
+}
+
+/* ---------- 液态玻璃材质：直接浮在极光底上的容器做背景折射 ----------
+   Apple 规则：玻璃只上浮层与容器；面板内部的嵌套小卡（docker-stat / pick-row 等）
+   只继承半透明底不再叠 blur，省合成层；表格/输入框等内容层保持高可读，不二次模糊 */
+.sidebar, .topbar, .panel, .login-card, .modal, .confirm-box, .toast,
+.select-menu, .nav-tile, .diag-tip, .tf-tip {
+    -webkit-backdrop-filter: var(--glass-filter);
+    backdrop-filter: var(--glass-filter);
+}
+
+/* 模态遮罩磨砂：全屏轻模糊一次，叠出 iOS sheet 的层次感（比内容玻璃轻，控开销） */
+.modal-mask, .confirm-mask {
+    -webkit-backdrop-filter: blur(8px) saturate(120%);
+    backdrop-filter: blur(8px) saturate(120%);
+}
+
 .hidden { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
-/* ---------- 滚动条：中性灰实色，无渐变 ---------- */
+/* ---------- 滚动条：中性半透明，无渐变 ---------- */
 * { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
 ::-webkit-scrollbar { width: 9px; height: 9px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -121,11 +163,15 @@ body {
 .login-card {
     position: relative;
     background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    border: 1px solid var(--glass-edge);
+    border-radius: var(--radius-lg);
     padding: 40px 36px;
     width: 372px;
     text-align: center;
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        inset 0 -1px 0 var(--glass-lo),
+        0 24px 64px var(--glass-drop);
 }
 
 .login-logo { font-size: 44px; }
@@ -160,7 +206,7 @@ body {
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--glass-edge);
     overflow-y: auto;
 }
 
@@ -207,7 +253,7 @@ body {
 .topbar {
     background: var(--panel);
     padding: 14px 24px;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--glass-edge);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -280,6 +326,7 @@ body {
     font-size: 13px;
     font-family: inherit;
     overflow: hidden;
+    box-shadow: inset 0 1px 0 var(--glass-hi);   /* 顶部受光：胶囊有玻璃厚度 */
 }
 
 /* 悬停只做底色/描边变化：不位移、不扫光、不发光。
@@ -293,6 +340,8 @@ body {
     border-color: var(--primary);
     color: var(--primary-fg);
     font-weight: 600;
+    /* iOS tint 按钮：顶部内高光 + 同色系柔光投影，像从玻璃上抬起一颗 */
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28), 0 4px 14px rgba(0, 113, 227, .30);
 }
 .btn.primary:hover:not(:disabled) { background: var(--primary-dark); border-color: var(--primary-dark); color: var(--primary-fg); }
 
@@ -335,15 +384,19 @@ a.btn:hover { text-decoration: none; }
 .seg-btn.active { background: var(--primary); color: var(--primary-fg); font-weight: 600; }
 .seg-btn.active:hover { background: var(--primary); color: var(--primary-fg); }
 
-/* ---------- 面板：实底色 + 1px 边框，无投影无高光 ---------- */
+/* ---------- 面板：半透明玻璃 + 顶亮底暗边缘光 + 轻悬浮投影 ---------- */
 .panel {
     position: relative;
     background: var(--panel);
-    border: 1px solid var(--border);
+    border: 1px solid var(--glass-edge);
     border-radius: var(--radius);
     padding: 18px;
     margin-bottom: 18px;
     overflow: hidden;
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        inset 0 -1px 0 var(--glass-lo),
+        0 8px 28px var(--glass-drop);
 }
 
 .toolbar {
@@ -356,13 +409,13 @@ a.btn:hover { text-decoration: none; }
 
 .toolbar .spacer { flex: 1; }
 
-/* 提示条：实底 + 左侧信息蓝指示条，正文用主文字色保证可读（danger/ok 等类型由内联样式改指示条颜色） */
+/* 提示条：半透明玻璃底 + 左侧信息蓝指示条，正文用主文字色保证可读（danger/ok 等类型由内联样式改指示条颜色） */
 .tip {
     background: var(--panel-glass);
     border: 1px solid var(--border);
     border-left: 3px solid var(--accent);
     color: var(--text);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 11px 14px;
     font-size: 13px;
     margin-bottom: 14px;
@@ -569,21 +622,23 @@ code {
 /* .field 表单里的下拉与输入框同宽；toolbar 等处保持内容宽（div 默认撑满需显式收回） */
 .field .select-view { width: 100%; }
 
-/* 浮层列表：实底 + 1px 边框 + 浮层轻投影；z-index 高于弹窗(100)/toast(200)/确认框(300) */
+/* 浮层列表：玻璃底 + 折射亮边 + 浮层投影；z-index 高于弹窗(100)/toast(200)/确认框(300) */
 .select-menu {
     position: fixed;
     z-index: 400;
     min-width: 100px;
     padding: 4px;
-    background: var(--panel-solid);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius-input);
-    box-shadow: var(--shadow-pop);
+    background: var(--panel);
+    border: 1px solid var(--glass-edge);
+    border-radius: var(--radius);
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        var(--shadow-pop);
     overflow-y: auto;
 }
 .select-opt {
     padding: 7px 10px;
-    border-radius: 6px;   /* 外层 10px - 内边距 4px，嵌套圆角对齐 */
+    border-radius: 8px;   /* 外层 16px - 内边距 4px，嵌套圆角对齐 */
     font-size: 13px;
     color: var(--text);
     cursor: pointer;
@@ -603,7 +658,7 @@ code {
 /* STUN 穿透任务表单：集成配置分区（ESA / Webhook / 通知）卡片化，与顶部基础字段区分，长表单更易扫读 */
 .field.form-section {
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 14px 16px 16px;
     background: var(--bg-2);
 }
@@ -627,7 +682,7 @@ code {
 .field.form-section .sec-desc { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 6px 0 12px; }
 
 /* Webhook 占位符参考：默认折叠，避免 17 行文档表格撑长表单 */
-.ph-ref { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--code-bg); }
+.ph-ref { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--code-bg); }
 .ph-ref > summary { cursor: pointer; padding: 9px 12px; font-size: 12px; color: var(--text); list-style: none; display: flex; align-items: center; gap: 7px; user-select: none; }
 .ph-ref > summary::-webkit-details-marker { display: none; }
 .ph-ref > summary::before { content: "▸"; color: var(--muted); font-size: 11px; }
@@ -651,7 +706,7 @@ code {
     gap: 10px;
     padding: 9px 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--panel);
     font-size: 12.5px;
     color: var(--text);   /* 覆盖 .field label 的次要灰：勾选行的名称是正文信息，不该整行发暗 */
@@ -704,7 +759,7 @@ code {
 .pick-empty {
     padding: 10px 12px;
     border: 1px dashed var(--border-strong);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--bg-2);
     font-size: 12px;
     color: var(--muted);
@@ -720,7 +775,7 @@ code {
     padding: 12px;
     margin-bottom: 12px;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--panel);
 }
 .wh-row-head { display: flex; gap: 8px; align-items: center; flex-basis: 100%; }
@@ -733,10 +788,10 @@ code {
 .wh-body { min-height: 100px; font-family: Consolas, "Courier New", monospace; }
 .wh-status { flex-basis: 100%; }
 
-/* ---------- 模态框：实底卡片 + 边框 + 轻投影（浮层才允许投影），无入场动画 ---------- */
+/* ---------- 模态框：玻璃卡片 + 折射亮边 + 浮层投影，遮罩磨砂 ---------- */
 .modal-mask {
     position: fixed; inset: 0;
-    background: rgba(0, 0, 0, .55);
+    background: rgba(6, 10, 16, .42);
     display: flex;
     align-items: flex-start;
     justify-content: center;
@@ -747,11 +802,14 @@ code {
 
 .modal {
     background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    border: 1px solid var(--glass-edge);
+    border-radius: var(--radius-lg);
     width: 620px;
     max-width: 100%;
-    box-shadow: var(--shadow-pop);
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        inset 0 -1px 0 var(--glass-lo),
+        var(--shadow-pop);
     overflow: hidden;
 }
 
@@ -774,7 +832,7 @@ code {
 /* ---------- 全局确认弹窗（替代原生 confirm） ---------- */
 .confirm-mask {
     position: fixed; inset: 0;
-    background: rgba(0, 0, 0, .55);
+    background: rgba(6, 10, 16, .42);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -784,13 +842,16 @@ code {
 
 .confirm-box {
     background: var(--panel);
-    border: 1px solid var(--border-strong);
-    border-radius: var(--radius);
+    border: 1px solid var(--glass-edge);
+    border-radius: var(--radius-lg);
     width: 400px;
     max-width: 100%;
     padding: 28px 24px 22px;
     text-align: center;
-    box-shadow: var(--shadow-pop);
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        inset 0 -1px 0 var(--glass-lo),
+        var(--shadow-pop);
 }
 
 .confirm-icon {
@@ -823,7 +884,7 @@ code {
 .confirm-box.danger #confirmOk { background: var(--red); border-color: var(--red); color: var(--primary-fg); font-weight: 600; }
 .confirm-box.danger #confirmOk:hover { background: var(--err-fg); border-color: var(--err-fg); color: var(--primary-fg); }
 
-/* ---------- Toast：实底 + 左侧语义指示条 ---------- */
+/* ---------- Toast：玻璃浮条 + 左侧语义指示条 ---------- */
 .toast {
     position: fixed;
     top: 22px;
@@ -832,13 +893,15 @@ code {
     background: var(--panel);
     color: var(--text);
     padding: 11px 22px;
-    border: 1px solid var(--border-strong);
+    border: 1px solid var(--glass-edge);
     border-left: 3px solid var(--muted);
     border-radius: var(--radius);
     font-size: 13px;
     font-weight: 500;
     z-index: 200;
-    box-shadow: var(--shadow-pop);
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        var(--shadow-pop);
 }
 
 .toast.err { color: var(--err-fg); border-color: var(--err-bd); border-left-color: var(--red); }
@@ -846,7 +909,7 @@ code {
 
 /* ---------- 导航首页：背景图 + 图标墙 ---------- */
 /* 负外边距让背景铺满整个内容区；::before 承载背景图并模糊（仅为文字可读性，非装饰），
-   磁贴本身为不透明实底卡片，因此文字无需任何阴影 */
+   磁贴本身为玻璃卡片，背景图透过玻璃折射，文字无需任何阴影 */
 .nav-page {
     position: relative;
     isolation: isolate;
@@ -875,7 +938,7 @@ code {
     padding: 6px 2px;
 }
 
-/* 磁贴：实底卡片；保留每卡主色（仅用于描边与图标底托），无流光、无位移 */
+/* 磁贴：玻璃卡片（浮在背景图/极光上，折射最明显）；保留每卡主色（仅用于描边与图标底托） */
 .nav-tile {
     position: relative;
     display: flex;
@@ -887,7 +950,10 @@ code {
     cursor: pointer;
     overflow: hidden;
     background: var(--panel);
-    border: 1px solid var(--border);
+    border: 1px solid var(--glass-edge);
+    box-shadow:
+        inset 0 1px 0 var(--glass-hi),
+        0 6px 20px var(--glass-drop);
 }
 
 .nav-tile:hover {
@@ -1001,7 +1067,7 @@ code {
 
 .img-cell {
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 8px;
     display: flex;
     flex-direction: column;
@@ -1023,7 +1089,7 @@ code {
 .img-ops { display: flex; gap: 4px; flex-wrap: wrap; }
 .img-ops .btn { padding: 2px 7px; font-size: 11px; }
 
-.img-preview-wrap { text-align: center; background: var(--code-bg); border-radius: var(--radius); padding: 12px; }
+.img-preview-wrap { text-align: center; background: var(--code-bg); border-radius: var(--radius-sm); padding: 12px; }
 .img-preview-wrap img { max-width: 100%; max-height: 60vh; }
 
 /* ---------- 导航图标选择区（新增/编辑表单） ---------- */
@@ -1033,7 +1099,7 @@ code {
     width: 48px; height: 48px;
     flex-shrink: 0;
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     background: var(--code-bg);
     display: flex;
     align-items: center;
@@ -1066,7 +1132,7 @@ code {
 }
 .diag-track i { display: block; height: 100%; border-radius: 4px; }
 .diag-val { white-space: nowrap; font-variant-numeric: tabular-nums; color: var(--text); }
-.diag-svg { width: 100%; height: 220px; display: block; background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.diag-svg { width: 100%; height: 220px; display: block; background: var(--code-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 /* 内存时间线图：左侧 Y 轴刻度 + 底部 X 轴时间 + 悬停十字准线/气泡（HTML 叠加，不受 SVG 拉伸影响） */
 .diag-chart { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto; column-gap: 8px; }
 .diag-yaxis { grid-column: 1; grid-row: 1; position: relative; width: 56px; height: 220px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -1269,7 +1335,7 @@ th.docker-sort:hover { color: var(--muted); }
 .dash-speed-tile {
     background: var(--panel-glass);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 14px 16px;
     text-align: center;
 }
@@ -1309,7 +1375,7 @@ th.docker-sort:hover { color: var(--muted); }
 .tf-card {
     background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-sm);
     padding: 10px 12px 6px;
 }
 .tf-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 2px; }
@@ -1418,21 +1484,21 @@ th.docker-sort:hover { color: var(--muted); }
 }
 
 /* ============ 浅色主题（默认）：仅覆写变量层 ============
-   基线（:root）为深色，此处换成白底 + 强调蓝；因所有颜色已收敛到变量，
+   基线（:root）为深色，此处换成白玻璃 + 蓝灰极光底；因所有颜色已收敛到变量，
    无需重复选择器覆盖。主题由 <head> 内联脚本首屏设定，切换见 app.js。 */
 html[data-theme="light"] {
     color-scheme: light;
 
-    /* 底色与层次。中性色全部换成带蓝调的蓝灰（页面 / 悬停 / 发丝线 / 次要文字），
-       卡片与输入框仍用纯白保持干净；普通按钮也是白底 + 细线（胶囊描边钮） */
-    --bg: #f2f5fa;
-    --bg-2: #f7f9fc;
-    --panel: #ffffff;
-    --panel-glass: #ffffff;
-    --hover: #e7eef7;
-    --input-bg: #ffffff;
-    --border: #d3dde9;
-    --border-strong: #b6c5d6;
+    /* 底色与层次：白玻璃卡片 + 蓝灰极光底，中性色保持蓝灰族
+       （半透明化后合成明度与原实底持平，对比度不降）；悬停泛淡蓝更贴 iOS 手感 */
+    --bg: #eef2f8;
+    --bg-2: rgba(255, 255, 255, .5);
+    --panel: rgba(255, 255, 255, .66);
+    --panel-glass: rgba(255, 255, 255, .6);
+    --hover: rgba(0, 113, 227, .08);
+    --input-bg: rgba(255, 255, 255, .78);
+    --border: rgba(28, 50, 80, .12);
+    --border-strong: rgba(28, 50, 80, .22);
     --text: #1c2733;
     --muted: #5b6b7d;
 
@@ -1474,15 +1540,25 @@ html[data-theme="light"] {
 
     /* 历史别名 */
     --panel-solid: #ffffff;
-    --code-bg: #eef3f9;
+    --code-bg: rgba(28, 50, 80, .06);
     --err-soft-bg: rgba(255, 59, 48, .07);
     --err-soft-border: rgba(255, 59, 48, .34);
 
+    /* 液态玻璃材质 token：浅色玻璃更亮、光斑更淡、投影更轻 */
+    --glass-filter: blur(18px) saturate(150%);
+    --glass-edge: rgba(255, 255, 255, .75);
+    --glass-hi: rgba(255, 255, 255, .95);
+    --glass-lo: rgba(28, 50, 80, .10);
+    --glass-drop: rgba(28, 50, 80, .16);
+    --blob-1: rgba(0, 113, 227, .14);
+    --blob-2: rgba(94, 92, 230, .12);
+    --blob-3: rgba(255, 149, 0, .10);
+
     /* 阴影：浅底用更轻的蓝灰投影 */
-    --shadow-pop: 0 4px 14px rgba(28, 50, 80, .13);
+    --shadow-pop: 0 16px 44px rgba(28, 50, 80, .16);
 
     /* 图表 / 进度条 */
-    --bar-track: #dfe8f2;
+    --bar-track: rgba(28, 50, 80, .12);
     --chart-line: #0071e3;
 
     /* 磁贴主色兜底（图标分析不出主色时用品牌蓝） */
@@ -1491,4 +1567,49 @@ html[data-theme="light"] {
 
 /* 浅色下的遮罩适当变浅并带蓝调，避免白底界面上一片黑 */
 html[data-theme="light"] .modal-mask,
-html[data-theme="light"] .confirm-mask { background: rgba(24, 38, 56, .35); }
+html[data-theme="light"] .confirm-mask { background: rgba(28, 50, 80, .28); }
+
+/* ============ 液态玻璃降级 ============
+   不支持 backdrop-filter 的浏览器（或系统开启「减少透明度」）回退实底：
+   只覆写底色变量，边缘光/投影/圆角保留，布局不跳变 */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    :root {
+        --bg-2: #202b38;
+        --panel: #1a232e;
+        --panel-glass: #26313f;
+        --hover: #26313f;
+        --input-bg: #202b38;
+        --border: #31404f;
+        --border-strong: #4b5c6e;
+    }
+    html[data-theme="light"] {
+        --bg-2: #f7f9fc;
+        --panel: #ffffff;
+        --panel-glass: #ffffff;
+        --hover: #e7eef7;
+        --input-bg: #ffffff;
+        --border: #d3dde9;
+        --border-strong: #b6c5d6;
+    }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+    :root {
+        --bg-2: #202b38;
+        --panel: #1a232e;
+        --panel-glass: #26313f;
+        --hover: #26313f;
+        --input-bg: #202b38;
+        --border: #31404f;
+        --border-strong: #4b5c6e;
+    }
+    html[data-theme="light"] {
+        --bg-2: #f7f9fc;
+        --panel: #ffffff;
+        --panel-glass: #ffffff;
+        --hover: #e7eef7;
+        --input-bg: #ffffff;
+        --border: #d3dde9;
+        --border-strong: #b6c5d6;
+    }
+}
