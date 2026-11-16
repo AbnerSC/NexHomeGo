@@ -66,8 +66,8 @@
     --err-soft-border: rgba(255, 69, 58, .42);
     
     /* 圆角：连续大圆角（iOS 连续曲率）—— 面板/卡片 16px、内部小块 10px、登录卡/模态 22px；玻璃带轻悬浮投影 */
-    --radius: 16px;
-    --radius-sm: 10px;
+    --radius: 0px;
+    --radius-sm: 0px;
     --radius-lg: 22px;
     --radius-pill: 980px;
     --radius-input: 10px;    /* 输入框/下拉/文本域圆角 */
