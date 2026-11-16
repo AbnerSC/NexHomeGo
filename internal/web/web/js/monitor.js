@@ -44,7 +44,7 @@ async function renderMonitor() {
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="monForm()">＋ 新增监控任务</button></div>
       <div class="panel"><table>
         <thead><tr>
-          <th style="width:200px">任务</th>
+          <th style="width:300px">任务</th>
           <th>目标</th>
           <th style="width:150px">状态</th>
           <th style="width:100px">延迟</th>
