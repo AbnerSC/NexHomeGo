@@ -436,7 +436,7 @@ func TestBuildMimeMessage(t *testing.T) {
 	msg := buildMimeMessage("from@x.com", "a@y.com, b@z.com", "告警T", "plain body", "<b>html</b>")
 	s := string(msg)
 	for _, want := range []string{
-		"From: from@x.com\r\n",
+		"From: NexHome <from@x.com>\r\n",
 		"To: a@y.com, b@z.com\r\n",
 		"Subject: =?UTF-8?B?",
 		"MIME-Version: 1.0\r\n",

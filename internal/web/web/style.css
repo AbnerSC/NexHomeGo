@@ -927,7 +927,7 @@ code {
     background-image: var(--nav-bg, none);
     background-size: cover;
     background-position: center;
-    filter: blur(14px);
+    filter: blur(5px);
 }
 
 .nav-grid {

@@ -19,6 +19,10 @@ import (
 // 锚定 ^$ 以对齐 Java Matcher.matches() 的全行匹配语义（否则行中间冒号会误判）。
 var emailKV = regexp.MustCompile(`^([^:：]{1,16})[:：]\s*(.+)$`)
 
+// emailFromName From 头显示名：纯地址时客户端会截取 @ 前本地部分当发件人名（如 "notify"），
+// 显式带显示名让收件端统一显示 NexHome。
+const emailFromName = "NexHome"
+
 func sendEmail(cfg map[string]interface{}, title, message, event string) (string, error) {
 	host := strings.TrimSpace(core.BodyStr(cfg, "host"))
 	port := core.BodyNum(cfg, "port", 465)
@@ -71,7 +75,8 @@ func buildMimeMessage(from, to, subject, plain, html string) []byte {
 	boundary := "nexhome_" + randHex(12)
 	now := time.Now()
 	var sb strings.Builder
-	sb.WriteString("From: " + from + "\r\n")
+	// From 头带显示名；SMTP 信封 MAIL FROM 仍用纯地址（信封不允许显示名）
+	sb.WriteString("From: " + emailFromName + " <" + from + ">\r\n")
 	sb.WriteString("To: " + strings.Join(splitRecipients(to), ", ") + "\r\n")
 	sb.WriteString("Subject: " + encodeSubject(subject) + "\r\n")
 	sb.WriteString("Date: " + now.Format("Mon, 02 Jan 2006 15:04:05 -0700") + "\r\n")
@@ -148,7 +153,7 @@ func buildEmailHtml(title, message, event string) string {
 		"<div style=\"margin:0;padding:24px 12px;background:#f2f4f7;" +
 		"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;\">" +
 		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" " +
-		"style=\"max-width:560px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;\">" +
+		"style=\"max-width:560px;margin:0 auto;background:#ffffff;border-radius:0;overflow:hidden;\">" +
 		"<tr><td style=\"height:6px;line-height:6px;font-size:0;background:" + accent + ";\"></td></tr>" +
 		"<tr><td style=\"padding:20px 28px 0;\">" +
 		"<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\"><tr>" +
