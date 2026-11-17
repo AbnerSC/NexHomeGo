@@ -146,7 +146,19 @@ docker compose up -d
 <img src="docs/ScreenShot_7.png" style="width: 100%" alt="系统设置">
 </div>
 
-## 七、加入群聊
+## 七、开源许可
+
+本项目基于 Go 语言开发，使用了以下第三方开源软件，在此向各开源项目作者致谢：
+
+| 名称              | 链接                                                                           | 许可证       | 用途                                 |
+|-------------------|--------------------------------------------------------------------------------|--------------|--------------------------------------|
+| ip2region         | [github.com/lionsoul2014/ip2region](https://github.com/lionsoul2014/ip2region) | Apache-2.0   | IP 归属地离线查询                    |
+| go-sqlite3        | [github.com/mattn/go-sqlite3](https://github.com/mattn/go-sqlite3)             | MIT          | SQLite 数据库驱动                    |
+| golang.org/x/net  | [github.com/golang/net](https://github.com/golang/net)                         | BSD-3-Clause | 网络协议扩展（ACME/HTTP 等底层支持） |
+| golang.org/x/text | [github.com/golang/text](https://github.com/golang/text)                       | BSD-3-Clause | 文本编码转换（x/net 间接依赖）       |
+
+
+## 八、加入群聊
 
 <p>
 <img src="docs/qrcode_qq.jpg" width="200">
