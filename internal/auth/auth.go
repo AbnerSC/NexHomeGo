@@ -17,9 +17,15 @@ import (
 
 // 内置鉴权：密码以 SHA-256 哈希保存在 app_config（key=auth.password）。
 // 首次启动随机生成高强度初始密码并打印控制台；登录颁发随机 Token（内存态，24 小时），
-// 前端经请求头 X-Token 携带。含「失败锁定」与「单点登录」。
+// 前端经请求头 X-Token 携带。含「失败锁定」与「平台内单点登录」：
+// 会话按平台隔离，同一平台新登录立即注销该平台旧会话，不同平台互不影响。
 
 const (
+	// PlatformPC 桌面/浏览器面板（本机默认平台），PlatformAndroid 安卓客户端。
+	// 各平台共用同一登录密码，但会话相互独立、各自单点。
+	PlatformPC      = "pc"
+	PlatformAndroid = "android"
+
 	KeyPassword    = "auth.password"
 	KeyMaxFails    = "security.login.maxFails"
 	KeyLockMinutes = "security.login.lockMinutes"
@@ -61,7 +67,11 @@ var NotifyBroadcast func(event, title, message string)
 
 var (
 	tokensMu sync.Mutex
-	tokens   = map[string]int64{} // token -> 过期时间戳(ms)
+	tokens   = map[string]session{} // token -> 会话
+
+	// platformTokens 每个平台当前有效的 token：登录时同平台新会话顶替旧会话（平台内单点），
+	// 退出/过期时同步清理，保证一个平台最多只有一个有效登录。
+	platformTokens = map[string]string{} // platform -> token
 
 	failsMu sync.Mutex
 	fails   = map[string]*failState{} // 登录失败细分桶：键为锁定键（直连=对端地址；可信代理后=对端|真实客户端）
@@ -87,6 +97,26 @@ type failState struct {
 	lastMs int64
 }
 
+// session 登录会话：platform 为所属平台（pc/android），expireMs 为过期时间戳(ms)。
+type session struct {
+	platform string
+	expireMs int64
+}
+
+// NormalizePlatform 归一化平台标识（大小写与两侧空白无关）：
+// 空值视为 PlatformPC（浏览器/本机面板），未支持的平台返回 400 参数错误——
+// 若把未知平台静默归并到 pc，会误踢掉 PC 平台上的正常会话。
+func NormalizePlatform(raw string) (string, error) {
+	switch p := strings.ToLower(strings.TrimSpace(raw)); p {
+	case "", PlatformPC:
+		return PlatformPC, nil
+	case PlatformAndroid:
+		return PlatformAndroid, nil
+	default:
+		return "", core.NewBadRequest("不支持的平台标识 %q，可选 %s / %s", raw, PlatformPC, PlatformAndroid)
+	}
+}
+
 // Init 初始化随机密码（仅首次启动），明文只打印控制台，不落日志表。
 func Init() error {
 	v, err := core.GetConfig(KeyPassword)
@@ -110,11 +140,16 @@ func Init() error {
 	return nil
 }
 
-// Login 登录校验（含失败锁定与单点登录）。成功返回 token；密码错误返回空串。
+// Login 登录校验（含失败锁定与平台内单点登录）。成功返回 token；密码错误返回空串。
 // 调用方应先经 LockRemainingMs 拦截锁定态。
 // lockKey 为失败细分桶的键（见 web.loginLockKey）；peer 为连接对端地址（Ctx.PeerIP），
 // 两者都不得使用客户端可伪造的转发头单独充当判定依据，否则本轮计数可被绕过。
-func Login(password, lockKey, peer string) (string, error) {
+// platform 为平台标识（pc/android，空值按 pc）：会话按平台隔离，同平台新登录注销该平台旧会话。
+func Login(password, lockKey, peer, platform string) (string, error) {
+	platform, err := NormalizePlatform(platform)
+	if err != nil {
+		return "", err
+	}
 	hash, err := core.GetConfig(KeyPassword)
 	if err != nil {
 		return "", err
@@ -130,11 +165,15 @@ func Login(password, lockKey, peer string) (string, error) {
 		peerFailsMu.Lock()
 		delete(peerFails, peer)
 		peerFailsMu.Unlock()
-		// 单点登录：新登录自动注销其余会话。
+		// 平台内单点登录：同平台新登录自动注销该平台旧会话，其它平台不受影响。
 		tokensMu.Lock()
-		tokens = map[string]int64{token: time.Now().UnixMilli() + tokenTTLms}
+		if old, ok := platformTokens[platform]; ok {
+			delete(tokens, old)
+		}
+		tokens[token] = session{platform: platform, expireMs: time.Now().UnixMilli() + tokenTTLms}
+		platformTokens[platform] = token
 		tokensMu.Unlock()
-		core.LogInfo(core.LogAuth, "用户登录成功")
+		core.LogInfo(core.LogAuth, "用户登录成功（平台="+platform+"）")
 		return token, nil
 	}
 	recordFailure(lockKey, peer)
@@ -222,21 +261,49 @@ func Check(token string) bool {
 	}
 	tokensMu.Lock()
 	defer tokensMu.Unlock()
-	expire, ok := tokens[token]
+	_, ok := lookupLocked(token, time.Now().UnixMilli())
+	return ok
+}
+
+// SessionPlatform 返回 token 所属平台（token 无效或已过期返回空与 false）。
+func SessionPlatform(token string) (string, bool) {
+	if token == "" {
+		return "", false
+	}
+	tokensMu.Lock()
+	defer tokensMu.Unlock()
+	s, ok := lookupLocked(token, time.Now().UnixMilli())
 	if !ok {
-		return false
+		return "", false
 	}
-	if expire < time.Now().UnixMilli() {
+	return s.platform, true
+}
+
+// lookupLocked 取会话并顺带回收过期条目（调用方持 tokensMu）。
+func lookupLocked(token string, now int64) (session, bool) {
+	s, ok := tokens[token]
+	if !ok {
+		return session{}, false
+	}
+	if s.expireMs < now {
 		delete(tokens, token)
-		return false
+		if platformTokens[s.platform] == token {
+			delete(platformTokens, s.platform)
+		}
+		return session{}, false
 	}
-	return true
+	return s, true
 }
 
 func Logout(token string) {
 	if token != "" {
 		tokensMu.Lock()
-		delete(tokens, token)
+		if s, ok := tokens[token]; ok {
+			delete(tokens, token)
+			if platformTokens[s.platform] == token {
+				delete(platformTokens, s.platform)
+			}
+		}
 		tokensMu.Unlock()
 		core.LogInfo(core.LogAuth, "用户退出登录")
 	}
@@ -255,7 +322,8 @@ func ChangePassword(oldPwd, newPwd string) (bool, error) {
 		return false, err
 	}
 	tokensMu.Lock()
-	tokens = map[string]int64{}
+	tokens = map[string]session{}
+	platformTokens = map[string]string{}
 	tokensMu.Unlock()
 	core.LogInfo(core.LogAuth, "登录密码已修改，所有会话已失效")
 	return true, nil

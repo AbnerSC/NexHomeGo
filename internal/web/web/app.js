@@ -370,7 +370,9 @@ async function enterApp() {
 $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     try {
-        const r = await api('POST', '/api/auth/login', { password: $('#loginPwd').value });
+        // platform 固定为 pc：面板本身（本机/浏览器）属 PC 平台，
+        // 与 Android 客户端各自独立会话、各自单点登录。
+        const r = await api('POST', '/api/auth/login', { password: $('#loginPwd').value, platform: 'pc' });
         TOKEN = r.token;
         localStorage.setItem('nx_token', TOKEN);
         $('#loginPwd').value = '';

@@ -141,7 +141,8 @@ async function renderSettings() {
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">登录安全设置</h3>
         <div class="tip" style="margin-bottom:12px">连续登录失败达到最大次数后，该来源 IP 将被临时锁定指定时长；成功登录后计数清零。
-          失败计数为进程内存态，重启后归零。系统强制<b>单点登录</b>：新设备登录会自动注销之前的会话。</div>
+          失败计数为进程内存态，重启后归零。会话按平台隔离（<b>pc</b> / <b>android</b>）：同一平台强制<b>单点登录</b>，
+          新登录会注销该平台之前的会话；两个平台互不影响、可同时在线。</div>
         <form id="secForm" class="form-grid">
           <div class="field"><label>最大失败次数（1~100）</label><input name="maxFails" type="number" min="1" max="100" required value="${sec.maxFails ?? 3}"></div>
           <div class="field"><label>锁定时长（分钟，1~1440）</label><input name="lockMinutes" type="number" min="1" max="1440" required value="${sec.lockMinutes ?? 30}"></div>

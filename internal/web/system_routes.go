@@ -58,6 +58,16 @@ func registerAuthRoutes() {
 		if strings.TrimSpace(password) == "" {
 			return core.NewBadRequest("密码不能为空")
 		}
+		// 平台标识：请求体 platform 优先，其次请求头 X-Platform；缺省为 pc（本机/浏览器面板）。
+		// 会话按平台隔离、各自单点：同平台新登录注销该平台旧会话，pc 与 android 可同时在线。
+		rawPlatform := core.BodyStr(b, "platform")
+		if strings.TrimSpace(rawPlatform) == "" {
+			rawPlatform = c.Header("X-Platform")
+		}
+		platform, err := auth.NormalizePlatform(rawPlatform)
+		if err != nil {
+			return err
+		}
 		// 失败计数与锁定的键：直连时只认 TCP 对端地址（c.PeerIP）；
 		// 面板挂在可信反代/CDN 后时改用「对端+真实客户端地址」（详见 loginLockKey）。
 		// peer 另行参与绝对桶计数（键=TCP 对端，不可伪造）：细分键含转发头、可被逐次
@@ -69,7 +79,7 @@ func registerAuthRoutes() {
 			c.Fail(http.StatusTooManyRequests, fmt.Sprintf("尝试过于频繁，已临时锁定，请约 %d 分钟后再试", minutes))
 			return nil
 		}
-		token, err := auth.Login(password, ip, peer)
+		token, err := auth.Login(password, ip, peer, platform)
 		if err != nil {
 			return err
 		}
@@ -77,7 +87,7 @@ func registerAuthRoutes() {
 			c.Fail(http.StatusUnauthorized, "密码错误")
 			return nil
 		}
-		c.Ok(core.NewRow().Set("token", token))
+		c.Ok(core.NewRow().Set("token", token).Set("platform", platform))
 		return nil
 	})
 
@@ -86,8 +96,10 @@ func registerAuthRoutes() {
 		if token == "" {
 			token = c.Query("token")
 		}
-		if auth.Check(token) {
-			c.Ok(core.NewRow().Set("loggedIn", true))
+		// 一次加锁同时完成有效性判定与平台归属读取：若分两次查询，两次临界区之间
+		// 被同平台新登录顶替或 token 刚好过期时，会出现 loggedIn=true 却不带 platform 的矛盾响应。
+		if platform, ok := auth.SessionPlatform(token); ok {
+			c.Ok(core.NewRow().Set("loggedIn", true).Set("platform", platform))
 			return nil
 		}
 		// 接口令牌（Access-Token）：本端点免登录，且是令牌的唯一探测入口，响应直接返回布尔值，
