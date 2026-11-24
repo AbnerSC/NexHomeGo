@@ -30,10 +30,10 @@ async function renderDdns() {
         阿里云 AccessKey 可在 <a href="#" onclick="setPage('settings')">系统设置 → 服务商凭证配置</a> 中统一维护，表单中直接下拉选择；
         对接阿里云建议使用 RAM 子账号 AccessKey（仅授予 AliyunDNSFullAccess 或 ESA 解析权限）。</div>
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="ddnsForm()">＋ 新增同步任务</button></div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:900px">
         <thead><tr><th>任务</th><th>域名</th><th>IP来源</th><th>定时同步</th><th>当前IP</th><th>最近同步</th><th>操作</th></tr></thead>
         <tbody id="ddnsTbody"><tr><td colspan="7" class="muted">加载中...</td></tr></tbody>
-      </table></div>`;
+      </table></div></div>`;
     await refreshDdnsRows();
     setRefresh(refreshDdnsRows, 10000);
 }

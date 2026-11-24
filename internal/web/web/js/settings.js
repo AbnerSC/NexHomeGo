@@ -124,10 +124,10 @@ async function renderSettings() {
           修改配置后所有引用它的任务自动生效。</div>
         <div class="toolbar" style="margin-bottom:10px"><div class="spacer"></div>
           <button class="btn primary" onclick="provForm()">＋ 新增配置</button></div>
-        <table>
+        <div class="table-scroll"><table style="min-width:760px">
           <thead><tr><th>名称</th><th>服务商</th><th>AccessKey ID</th><th>ESA 站点</th><th style="width: 140px">操作</th></tr></thead>
           <tbody>${cfgRows || '<tr><td colspan="5" class="muted">暂无配置，可在 DDNS / 证书表单中手动填写凭证</td></tr>'}</tbody>
-        </table>
+        </table></div>
       </div>
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">修改登录密码</h3>

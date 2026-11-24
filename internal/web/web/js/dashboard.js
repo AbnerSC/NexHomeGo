@@ -172,6 +172,19 @@ function dvNiceMax(v) {
  */
 function drawVisitChart(host, days) {
     if (!host) return;
+    // 容器宽度随视口/侧栏形态变化（手机旋转、平板图标栏、桌面窄窗）：宽度变了按新尺寸重绘。
+    // 同一 host 只留一个观察者；重绘只改内容不改容器尺寸，不会自激。
+    if (!host._ro) {
+        host._ro = new ResizeObserver(() => {
+            const w = Math.round(host.clientWidth);
+            if (!host._days || w === host._lastW) return;
+            host._lastW = w;
+            drawVisitChart(host, host._days);
+        });
+        host._ro.observe(host);
+    }
+    host._days = days;
+    host._lastW = Math.round(host.clientWidth || 0);
     if (!days.length) { host.innerHTML = '<p class="muted small" style="margin:0">暂无访问数据</p>'; return; }
     const W = Math.max(host.clientWidth || 0, 240), H = Math.max(host.clientHeight || 0, 140);
     const P = { l: 42, r: 14, t: 14, b: 20 };
@@ -311,7 +324,7 @@ async function renderDashboard() {
       ${certSoon ? `
       <div class="panel">
         <h3 class="dash-panel-title">🔐 证书临期提醒（≤ ${cert.warnDays} 天）</h3>
-        <table><thead><tr><th>任务</th><th>到期日</th><th>剩余</th></tr></thead><tbody>${certList}</tbody></table>
+        <div class="table-scroll"><table style="min-width:460px"><thead><tr><th>任务</th><th>到期日</th><th>剩余</th></tr></thead><tbody>${certList}</tbody></table></div>
       </div>` : ''}
       <div class="panel">
         <h3 class="dash-panel-title">📈 代理访问统计

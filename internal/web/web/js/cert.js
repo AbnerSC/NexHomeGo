@@ -58,11 +58,11 @@ async function renderCert() {
         </form>
       </div>
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="certForm()">＋ 新增证书任务</button></div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:880px">
         <thead>
           <tr>
             <th style="width:20%">任务</th>
-            <th>域名</th>
+            <th style="width:220px">域名</th>
             <th style="width:10%">状态</th>
             <th style="width:10%">到期时间</th>
             <th style="width:10%">自动续期</th>
@@ -70,7 +70,7 @@ async function renderCert() {
           </tr>
         </thead>
         <tbody id="certTbody"><tr><td colspan="6" class="muted">加载中...</td></tr></tbody>
-      </table></div>`;
+      </table></div></div>`;
     $('#certSettingForm').addEventListener('submit', async e => {
         e.preventDefault();
         const body = Object.fromEntries(new FormData(e.target).entries());

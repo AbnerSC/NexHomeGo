@@ -2,8 +2,16 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <!-- viewport-fit=cover：iPhone 刘海/圆角屏下让页面铺到安全区边缘，再由 CSS 的 safe-area 变量补内边距 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>NexHome 联枢 · 内网节点守护工具</title>
+    <!-- 移动端 PWA：可添加到主屏，theme-color 由 app.js 随浅/深主题同步 -->
+    <meta name="theme-color" id="metaThemeColor" content="#eef2f8">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="NexHome 联枢">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-192.png">
     <link rel="stylesheet" href="style.css">
     <script>
         /* 主题初始化：在首屏渲染前确定主题，避免浅色/深色闪屏。默认浅色，用户偏好持久化到 localStorage */
@@ -36,29 +44,36 @@
 
 <!-- 主界面 -->
 <div id="mainView" class="layout hidden">
-    <aside class="sidebar">
-        <div class="brand"><span class="brand-logo">🏠</span> NexHome 联枢</div>
+    <!-- 侧栏三种形态：桌面完整（文字+图标）/ 平板图标栏（768-1023，仅图标）/ 手机抽屉（<768，默认收起） -->
+    <aside class="sidebar" id="sidebar">
+        <div class="brand">
+            <span class="brand-logo">🏠</span><span class="brand-name">NexHome 联枢</span>
+            <button type="button" class="nav-close" id="btnNavClose" aria-label="关闭菜单">✕</button>
+        </div>
         <nav>
-            <a class="nav-item active" data-page="dashboard">📊 总览</a>
-            <a class="nav-item" data-page="home">🧭 网站导航</a>
-            <a class="nav-item" data-page="ddns">🌐 DDNS 同步</a>
-            <a class="nav-item" data-page="stun">🔓 STUN 穿透</a>
-            <a class="nav-item" data-page="monitor">📡 可用性监控</a>
-            <a class="nav-item" data-page="notify">🔔 通知中心</a>
-            <a class="nav-item" data-page="wol">⚡ WOL 唤醒</a>
-            <a class="nav-item" data-page="cert">🔐 SSL 证书</a>
-            <a class="nav-item" data-page="proxy">🔀 代理中心</a>
-            <a class="nav-item" data-page="docker">🐳 Docker 容器</a>
-            <a class="nav-item" data-page="logs">📋 操作日志</a>
-            <a class="nav-item" data-page="diag">🩺 内存监控</a>
-            <a class="nav-item" data-page="settings">⚙️ 系统设置</a>
+            <a class="nav-item active" data-page="dashboard" title="总览"><span class="nav-ico">📊</span><span class="nav-label">总览</span></a>
+            <a class="nav-item" data-page="home" title="网站导航"><span class="nav-ico">🧭</span><span class="nav-label">网站导航</span></a>
+            <a class="nav-item" data-page="ddns" title="DDNS 同步"><span class="nav-ico">🌐</span><span class="nav-label">DDNS 同步</span></a>
+            <a class="nav-item" data-page="stun" title="STUN 穿透"><span class="nav-ico">🔓</span><span class="nav-label">STUN 穿透</span></a>
+            <a class="nav-item" data-page="monitor" title="可用性监控"><span class="nav-ico">📡</span><span class="nav-label">可用性监控</span></a>
+            <a class="nav-item" data-page="notify" title="通知中心"><span class="nav-ico">🔔</span><span class="nav-label">通知中心</span></a>
+            <a class="nav-item" data-page="wol" title="WOL 唤醒"><span class="nav-ico">⚡</span><span class="nav-label">WOL 唤醒</span></a>
+            <a class="nav-item" data-page="cert" title="SSL 证书"><span class="nav-ico">🔐</span><span class="nav-label">SSL 证书</span></a>
+            <a class="nav-item" data-page="proxy" title="代理中心"><span class="nav-ico">🔀</span><span class="nav-label">代理中心</span></a>
+            <a class="nav-item" data-page="docker" title="Docker 容器"><span class="nav-ico">🐳</span><span class="nav-label">Docker 容器</span></a>
+            <a class="nav-item" data-page="logs" title="操作日志"><span class="nav-ico">📋</span><span class="nav-label">操作日志</span></a>
+            <a class="nav-item" data-page="diag" title="内存监控"><span class="nav-ico">🩺</span><span class="nav-label">内存监控</span></a>
+            <a class="nav-item" data-page="settings" title="系统设置"><span class="nav-ico">⚙️</span><span class="nav-label">系统设置</span></a>
         </nav>
         <div class="sidebar-foot">
             <span id="sysInfo" class="muted small"></span>
         </div>
     </aside>
+    <!-- 手机抽屉遮罩：点击关闭菜单，桌面/平板不显示 -->
+    <div class="nav-mask hidden" id="navMask"></div>
     <main class="content">
         <header class="topbar">
+            <button type="button" class="btn icon nav-open" id="btnNavOpen" aria-label="打开菜单" title="菜单">☰</button>
             <h2 id="pageTitle">总览</h2>
             <!-- 顶栏系统资源监控（CPU / 内存 / 虚拟内存），由 app.js 每 5 秒刷新 -->
             <div id="sysMetrics" class="sys-metrics"></div>

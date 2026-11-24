@@ -31,10 +31,10 @@ async function renderWol() {
         <div class="spacer"></div>
         <button class="btn primary" onclick="wolForm()">＋ 新增设备</button>
       </div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:660px">
         <thead><tr><th style="width:30px"></th><th>设备名称</th><th>MAC 地址</th><th>广播地址</th><th>操作</th></tr></thead>
         <tbody id="wolTbody"><tr><td colspan="5" class="muted">加载中...</td></tr></tbody>
-      </table></div>`;
+      </table></div></div>`;
     $('#wolAll').addEventListener('change', e =>
         $$('.wol-chk').forEach(c => c.checked = e.target.checked));
     setRefresh(null);

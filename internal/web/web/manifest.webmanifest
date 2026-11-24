@@ -1,0 +1,16 @@
+{
+  "name": "NexHome 联枢 · 内网节点守护工具",
+  "short_name": "NexHome 联枢",
+  "description": "一站式内网节点守护工具：DDNS / STUN 穿透 / 反向代理 / 证书 / 监控",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eef2f8",
+  "theme_color": "#eef2f8",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

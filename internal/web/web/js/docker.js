@@ -220,10 +220,10 @@ async function buildDockerContainers(ov) {
     $('#pageBody').innerHTML = `
       <div id="dockerStats">${dockerHeader(ov)}</div>
       ${dockerToolbar(ov)}
-      <div class="panel" style="padding:6px 10px"><table>
+      <div class="panel" style="padding:6px 10px"><div class="table-scroll"><table style="min-width:1266px">
         <thead id="dockerThead">${dockerContainersTheadHtml()}</thead>
         <tbody id="dockerTbody">${dockerContainersRowsHtml()}</tbody>
-      </table></div>`;
+      </table></div></div>`;
 }
 
 /** 可排序表头：点击切换该列升/降序 */
@@ -268,14 +268,14 @@ window.dockerSortBy = key => {
 /** 容器表格 thead（含排序箭头） */
 function dockerContainersTheadHtml() {
     return `<tr>
-          ${dockerSortTh('name', '容器名称', 'width:180px')}
-          ${dockerSortTh('image', '镜像')}
-          ${dockerSortTh('state', '状态', 'width:100px')}
-          ${dockerSortTh('mem', '内存', 'width:140px')}
-          ${dockerSortTh('sizeRw', '磁盘', 'width:90px')}
-          ${dockerSortTh('ip', '容器 IP', 'width:120px')}
-          <th>暴露端口</th><th style="width:150px">Compose</th>
-          <th style="width:235px">操作</th>
+          ${dockerSortTh('name', '容器名称', 'width:170px')}
+          ${dockerSortTh('image', '镜像', 'width:200px')}
+          ${dockerSortTh('state', '状态', 'width:96px')}
+          ${dockerSortTh('mem', '内存', 'width:120px')}
+          ${dockerSortTh('sizeRw', '磁盘', 'width:80px')}
+          ${dockerSortTh('ip', '容器 IP', 'width:110px')}
+          <th style="width:170px">暴露端口</th><th style="width:120px">Compose</th>
+          <th style="width:200px">操作</th>
         </tr>`;
 }
 
@@ -388,13 +388,13 @@ window.dockerDetail = async id => {
       ${sec('实时资源')}
       ${live}
       ${sec('网络（容器内 IP）')}
-      <table>${netRows ? '<thead><tr><th>网络</th><th>IP</th><th>网关</th><th>MAC</th></tr></thead><tbody>' + netRows + '</tbody>'
-        : '<tbody><tr><td class="muted">无</td></tr></tbody>'}</table>
+      <div class="table-scroll"><table style="min-width:520px">${netRows ? '<thead><tr><th>网络</th><th>IP</th><th>网关</th><th>MAC</th></tr></thead><tbody>' + netRows + '</tbody>'
+        : '<tbody><tr><td class="muted">无</td></tr></tbody>'}</table></div>
       ${sec('端口映射')}
       <table><tbody>${mapRows || '<tr><td class="muted">未暴露端口</td></tr>'}</tbody></table>
       ${sec('挂载')}
-      <table>${mntRows ? '<thead><tr><th style="width:100px">类型</th><th>宿主机路径</th><th style="width: 300px">容器内路径</th><th style="width:70px">模式</th></tr></thead><tbody>' + mntRows + '</tbody>'
-        : '<tbody><tr><td class="muted">无挂载</td></tr></tbody>'}</table>
+      <div class="table-scroll"><table style="min-width:760px">${mntRows ? '<thead><tr><th style="width:100px">类型</th><th>宿主机路径</th><th style="width: 300px">容器内路径</th><th style="width:70px">模式</th></tr></thead><tbody>' + mntRows + '</tbody>'
+        : '<tbody><tr><td class="muted">无挂载</td></tr></tbody>'}</table></div>
       ${sec('环境变量')}
       <table><tbody>${envRows || '<tr><td class="muted">无</td></tr>'}</tbody></table>`, 'wide');
 };
@@ -425,7 +425,7 @@ async function buildDockerCompose(ov) {
       <div id="dockerStats">${dockerHeader(ov)}</div>
       ${dockerToolbar(ov)}
       <div class="tip">按容器标签 <b>com.docker.compose.project</b> 分组聚合（docker compose up 部署的项目自动携带）。</div>
-      <div class="panel" style="padding:6px 10px"><table>
+      <div class="panel" style="padding:6px 10px"><div class="table-scroll"><table style="min-width:960px">
         <thead><tr>
           <th style="width:200px">项目</th>
           <th>工作目录</th>
@@ -436,7 +436,7 @@ async function buildDockerCompose(ov) {
           <th style="width:170px">操作</th>
         </tr></thead>
         <tbody id="dockerTbody">${dockerComposeRowsHtml(projects)}</tbody>
-      </table></div>`;
+      </table></div></div>`;
 }
 
 /** 项目详情弹窗：宽模态框列出该 Compose 项目下全部容器；下钻容器详情关闭后自动回到本列表 */
@@ -456,11 +456,11 @@ window.dockerProjectDetail = async name => {
         <td><button class="btn small" onclick="dockerDetail(${jsq(c.id)})">详情</button></td>
       </tr>`).join('');
     modal(`Compose 项目 · ${name}`, `
-      <table>
+      <div class="table-scroll"><table style="min-width:900px">
         <thead><tr><th style="width:170px">容器</th><th style="width:110px">服务</th><th style="width:100px">状态</th>
           <th style="width:140px">运行时长</th><th>镜像</th><th style="width:110px">容器 IP</th><th style="width:70px">操作</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="7" class="muted">该项目当前无容器</td></tr>'}</tbody>
-      </table>`, 'wide');
+      </table></div>`, 'wide');
 };
 
 /** 编排脚本弹窗：后端按项目标签定位并读取 compose 配置文件内容 */

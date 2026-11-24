@@ -344,6 +344,30 @@ function setRefresh(fn, ms) {
     if (fn) refreshTimer = setInterval(() => fn().catch(() => { }), ms);
 }
 
+/* ---------------- 手机抽屉导航 ----------------
+   <768px 时侧栏变为左侧抽屉（CSS 控制），这里只负责开关与遮罩。
+   桌面/平板（≥768）不显示汉堡按钮，抽屉类名也不会生效。 */
+const NAV_MQ = window.matchMedia('(max-width: 767px)');
+
+function openNavDrawer() {
+    $('#mainView').classList.add('nav-open');
+    $('#navMask').classList.remove('hidden');
+}
+
+function closeNavDrawer() {
+    $('#mainView').classList.remove('nav-open');
+    $('#navMask').classList.add('hidden');
+}
+
+$('#btnNavOpen').addEventListener('click', openNavDrawer);
+$('#btnNavClose').addEventListener('click', closeNavDrawer);
+$('#navMask').addEventListener('click', closeNavDrawer);
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') closeNavDrawer();
+});
+// 旋转屏幕/拉宽窗口回到桌面布局时，清掉残留的抽屉状态与遮罩
+NAV_MQ.addEventListener('change', e => { if (!e.matches) closeNavDrawer(); });
+
 /* ---------------- 登录鉴权 ---------------- */
 
 async function checkLogin() {
@@ -356,6 +380,7 @@ async function checkLogin() {
 function showLogin() {
     $('#mainView').classList.add('hidden');
     $('#loginView').classList.remove('hidden');
+    closeNavDrawer();
     stopSysMetrics();
 }
 
@@ -398,10 +423,14 @@ function currentTheme() {
     return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
 }
 
-/** 同步切换按钮文案：浅色下提示切到深色，反之提示切回浅色 */
+/** 同步切换按钮文案：浅色下提示切到深色，反之提示切回浅色；
+    同时同步浏览器地址栏/状态栏配色（PWA theme-color） */
 function updateThemeBtn() {
     const btn = $('#btnTheme');
-    if (btn) btn.textContent = currentTheme() === 'dark' ? '☀️ 浅色' : '🌙 深色';
+    const dark = currentTheme() === 'dark';
+    if (btn) btn.textContent = dark ? '☀️ 浅色' : '🌙 深色';
+    const meta = $('#metaThemeColor');
+    if (meta) meta.setAttribute('content', dark ? '#10161e' : '#eef2f8');
 }
 
 function setTheme(theme) {
@@ -498,7 +527,11 @@ const RENDER = {
 function setPage(page) {
     currentPage = page;
     setRefresh(null);
+    closeNavDrawer();   // 手机抽屉：选完菜单立即收起
     $$('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === page));
+    // 当前项滚动到侧栏可视区（抽屉/图标栏高度不足时，选中项可能在折叠区外）
+    const active = document.querySelector('.nav-item.active');
+    if (active) active.scrollIntoView({ block: 'nearest' });
     $('#pageTitle').textContent = PAGE_TITLES[page];
     $('#pageBody').innerHTML = '<p class="muted">加载中...</p>';
     RENDER[page]().catch(e => { $('#pageBody').innerHTML = `<p style="color:var(--err-fg)">${esc(e.message)}</p>`; });

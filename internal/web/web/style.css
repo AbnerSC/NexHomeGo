@@ -91,6 +91,12 @@
     
     /* 导航首页背景图：由首页内联样式按配置覆盖（url('...')），默认无背景 */
     --nav-bg: none;
+
+    /* 内容区页边距：桌面 24/20，手机在断点内收紧；导航首页的负边距与之联动 */
+    --page-px: 24px;
+    --page-py: 20px;
+    --topbar-py: 14px;
+    --sidebar-w: 214px;
     
     /* 导航磁贴每卡主色（r,g,b）：由 home.js 按图标主色分析结果内联覆盖。
        现仅用于图标底托着色与悬停描边，不再参与渐变/发光；取不到主色时兜底为品牌蓝 */
@@ -153,11 +159,15 @@ body::before {
 /* ---------- 登录页 ---------- */
 .login-wrap {
     min-height: 100vh;
+    min-height: 100dvh;   /* 移动浏览器地址栏收回/展开时不被裁切，旧浏览器回退 100vh */
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
     overflow: hidden;
+    padding: 24px 16px;
+    padding-top: max(24px, env(safe-area-inset-top));
+    padding-bottom: max(24px, env(safe-area-inset-bottom));
 }
 
 .login-card {
@@ -167,6 +177,7 @@ body::before {
     border-radius: var(--radius-lg);
     padding: 40px 36px;
     width: 372px;
+    max-width: 100%;   /* 320~360px 小屏下不横向溢出 */
     text-align: center;
     box-shadow:
         inset 0 1px 0 var(--glass-hi),
@@ -196,11 +207,12 @@ body::before {
 .login-card .small { margin-top: 14px; display: block; }
 
 /* ---------- 布局 ---------- */
-/* 锁定视口高度：整页不滚动，滚动只发生在右侧 .page-body 内，左侧菜单保持固定 */
-.layout { display: flex; height: 100vh; overflow: hidden; position: relative; }
+/* 锁定视口高度：整页不滚动，滚动只发生在右侧 .page-body 内，左侧菜单保持固定。
+   dvh 让移动浏览器地址栏收起/展开时高度跟随可视区，避免底部被裁。 */
+.layout { display: flex; height: 100vh; height: 100dvh; overflow: hidden; position: relative; }
 
 .sidebar {
-    width: 214px;
+    width: var(--sidebar-w);
     background: var(--panel);
     color: var(--muted);
     display: flex;
@@ -210,21 +222,58 @@ body::before {
     overflow-y: auto;
 }
 
+/* 顶部品牌区：图标 + 名称 + 抽屉关闭按钮（仅手机抽屉显示） */
 .brand {
     padding: 16px;
     font-size: 16px;
     font-weight: 700;
     border-bottom: 1px solid var(--border);
     color: var(--text);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
 }
 
-.brand-logo { margin-right: 6px; }
+.brand-logo { margin-right: 0; }
+
+/* 抽屉关闭按钮与顶栏汉堡按钮：桌面/平板不占位，仅在各自断点显示 */
+.nav-close {
+    display: none;
+    margin-left: auto;
+    flex-shrink: 0;
+    width: 34px; height: 34px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-input);
+    background: var(--panel-glass);
+    color: var(--muted);
+    font-size: 14px;
+    font-family: inherit;
+    cursor: pointer;
+}
+.nav-close:hover { color: var(--text); background: var(--hover); }
+
+.topbar .nav-open { display: none; flex-shrink: 0; }
+
+/* 手机抽屉遮罩 */
+.nav-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 115;
+    background: rgba(6, 10, 16, .42);
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
 
 .sidebar nav { flex: 1; padding: 12px 10px; }
 
 .nav-item {
     position: relative;
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 10px 14px;
     border-radius: var(--radius-sm);
     cursor: pointer;
@@ -234,6 +283,10 @@ body::before {
     user-select: none;
     border: 1px solid transparent;
 }
+
+/* 导航图标定宽居中：平板图标栏裁掉文字后，各图标纵向对齐成一条线 */
+.nav-ico { width: 20px; flex-shrink: 0; text-align: center; font-size: 15px; line-height: 1.35; }
+.nav-label { overflow: hidden; text-overflow: ellipsis; }
 
 .nav-item:hover { background: var(--hover); }
 
@@ -252,7 +305,7 @@ body::before {
 
 .topbar {
     background: var(--panel);
-    padding: 14px 24px;
+    padding: var(--topbar-py) var(--page-px);
     border-bottom: 1px solid var(--glass-edge);
     display: flex;
     align-items: center;
@@ -309,7 +362,7 @@ body::before {
 .metric-bar.warn i { background: var(--orange); }
 .metric-bar.err i { background: var(--red); }
 
-.page-body { padding: 20px 24px; flex: 1; overflow-y: auto; }
+.page-body { padding: var(--page-py) var(--page-px); flex: 1; overflow-y: auto; overflow-x: hidden; }
 
 /* ---------- 通用组件：按钮 ---------- */
 .btn {
@@ -443,8 +496,9 @@ td .badge { white-space: normal; word-break: break-all; }
    避免 "nex-h ome" 这类撕裂观感；超长无断点串仍兜底断词 */
 td .badge.badge-wrap { word-break: normal; overflow-wrap: break-word; line-height: 1.7; }
 
-/* 宽表格横向滚动：列内容总宽超过容器时不挤压列宽，改为出现横向滑动条（配合表格的 min-width） */
-.table-scroll { overflow-x: auto; }
+/* 宽表格横向滚动：列内容总宽超过容器时不挤压列宽，改为出现横向滑动条（配合表格的 min-width）。
+   表格未超宽时不产生滚动条；移动端保留惯性滚动 */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
 .table-scroll > table { margin-bottom: 0; }
 
 /* 操作列：图标按钮成组，紧凑且悬停有语义提示（title） */
@@ -796,6 +850,7 @@ code {
     align-items: flex-start;
     justify-content: center;
     padding: 6vh 16px;
+    padding-top: max(6vh, env(safe-area-inset-top));
     z-index: 100;
     overflow-y: auto;
 }
@@ -806,6 +861,12 @@ code {
     border-radius: var(--radius-lg);
     width: 620px;
     max-width: 100%;
+    /* 弹窗高不超过可视区（dvh 跟随移动端地址栏）：表头固定，正文内部滚动，
+       避免长表单把整张卡片撑出屏幕、只能靠遮罩滚动 */
+    max-height: calc(100vh - 12vh);
+    max-height: calc(100dvh - 12vh);
+    display: flex;
+    flex-direction: column;
     box-shadow:
         inset 0 1px 0 var(--glass-hi),
         inset 0 -1px 0 var(--glass-lo),
@@ -823,11 +884,12 @@ code {
     align-items: center;
     background: var(--bg-2);
     color: var(--text);
+    flex-shrink: 0;
 }
 
 .modal-close { cursor: pointer; color: var(--muted); padding: 2px 8px; border-radius: 4px; }
 .modal-close:hover { color: var(--err-fg); background: var(--err-bg); }
-.modal-body { padding: 20px; }
+.modal-body { padding: 20px; overflow-y: auto; flex: 1; min-height: 0; }
 
 /* ---------- 全局确认弹窗（替代原生 confirm） ---------- */
 .confirm-mask {
@@ -913,9 +975,9 @@ code {
 .nav-page {
     position: relative;
     isolation: isolate;
-    margin: -20px -24px;
-    padding: 20px 24px;
-    min-height: calc(100% + 40px);
+    margin: calc(var(--page-py) * -1) calc(var(--page-px) * -1);
+    padding: var(--page-py) var(--page-px);
+    min-height: calc(100% + var(--page-py) * 2);
     overflow: hidden;   /* 裁掉 ::before 模糊层外延，避免滚动容器出现横向滚动条 */
 }
 
@@ -1390,29 +1452,163 @@ th.docker-sort:hover { color: var(--muted); }
     .metric-sub { display: none; }
 }
 
-@media (max-width: 960px) {
-    /* 窄屏上下堆叠，恢复整页滚动（960px 起生效：平板竖屏等中等宽度也折叠侧边栏，
-       否则该区间侧边栏与内容互相挤压，顶栏指标条还会杂乱换行） */
-    body { overflow: auto; }
-    .layout { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
-    .topbar { flex-wrap: wrap; }
-    /* 窄屏下监控条换行到顶栏下一行，避免挤压标题与按钮 */
-    .sys-metrics { order: 3; width: 100%; justify-content: flex-start; margin: 10px 0 0; }
-    .sidebar { width: 100%; flex-direction: row; align-items: center; overflow-x: auto; border-right: none; border-bottom: 1px solid var(--border); }
-    .sidebar nav { display: flex; padding: 6px; }
-    .nav-item { white-space: nowrap; margin: 0 2px; }
-    .brand { border: none; white-space: nowrap; }
+/* 平板（768~1023）：侧栏收窄为纯图标栏，内容区优先；顶栏指标换行到第二行。
+   iPad 竖屏（768/834）落在此区间，横屏（1024/1180/1366）仍用桌面完整侧栏。 */
+@media (min-width: 768px) and (max-width: 1023px) {
+    :root { --sidebar-w: 76px; }
+    .brand { justify-content: center; padding: 16px 8px; gap: 0; }
+    .brand-name { display: none; }
+    .sidebar nav { padding: 10px 8px; }
+    .nav-item { justify-content: center; padding: 12px 0; gap: 0; }
+    .nav-label { display: none; }
     .sidebar-foot { display: none; }
-    .page-body { overflow-y: visible; }
-    .form-grid { grid-template-columns: 1fr; }
+    /* 顶栏空间不足：标题与按钮一行，指标条整体换到第二行（flex:1 的 basis 为 0，需显式改成 100% 才换行） */
+    .topbar { flex-wrap: wrap; }
+    .sys-metrics { order: 3; flex: 1 0 100%; width: 100%; justify-content: flex-start; margin: 10px 0 0; gap: 6px 18px; }
+    .metric-bar { width: 44px; }
+    /* 三列并排的表单在图标栏宽度下过挤，收敛为单列；两列表单保留 */
     #certSettingForm { grid-template-columns: 1fr; }
     #pwdForm { grid-template-columns: 1fr; }
-    .px-pane { grid-template-columns: 1fr; }
-    /* 指标条换行到顶栏第二行后空间有限：间距与迷你进度条收窄，尽量保持单行排列 */
-    .sys-metrics { gap: 6px 18px; }
-    .metric-bar { width: 44px; }
-    /* 总览统计卡数值字号收缩：运行时长等长文案在窄屏不再把卡片撑得失衡 */
+}
+
+/* 手机（<768）：侧栏变左侧抽屉（默认收起），顶栏留汉堡按钮，内容区收紧。
+   手机横屏（宽度可到 844）仍归此档，保证导航可展开而不占宽度。 */
+@media (max-width: 767px) {
+    :root { --page-px: 14px; --page-py: 14px; --topbar-py: 10px; }
+
+    /* 横屏刘海/圆角安全区：左右内边距取页面边距与安全区的较大值（刘海在左或在右都覆盖） */
+    .topbar, .page-body {
+        padding-left: max(var(--page-px), env(safe-area-inset-left));
+        padding-right: max(var(--page-px), env(safe-area-inset-right));
+    }
+
+    /* 抽屉：fixed 滑出，遮罩点击关闭（由 app.js 切换 .nav-open） */
+    .sidebar {
+        position: fixed;
+        inset: 0 auto 0 0;
+        width: min(272px, 84vw);
+        z-index: 120;
+        transform: translateX(-100%);
+        transition: transform .22s ease;
+        box-shadow: 8px 0 32px rgba(3, 8, 14, .28);
+        padding-top: env(safe-area-inset-top);
+        padding-bottom: env(safe-area-inset-bottom);
+        padding-left: env(safe-area-inset-left);
+    }
+    .layout.nav-open .sidebar { transform: none; }
+    .nav-close { display: inline-flex; }
+    .topbar .nav-open { display: inline-flex; }
+
+    /* 顶栏：汉堡 + 标题 + 两个按钮；指标条换行到第二行并压成单行纯数值
+       （顶栏是全站 CPU/内存/虚拟内存唯一入口，手机不隐藏；迷你进度条省去，
+       数值本身带 % 已足够，整行只多约 24px 高） */
+    .topbar { gap: 8px; flex-wrap: wrap; }
+    .topbar h2 { font-size: 16px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sys-metrics { order: 3; flex: 1 0 100%; width: 100%; justify-content: flex-start; margin: 6px 0 0; gap: 4px 16px; }
+    .sys-metrics .metric-bar { display: none; }
+    .topbar-actions { gap: 6px; }
+
+    /* 表单/页签一律单列 */
+    .form-grid, #certSettingForm, #pwdForm, .px-pane { grid-template-columns: 1fr; }
+    .panel { padding: 14px; margin-bottom: 14px; }
+    .login-card { padding: 30px 22px; }
+
+    /* 统计卡凑成两列：180px 下限在 360~430 屏上只能排一列，浪费纵向空间 */
+    .dash-stat { flex: 1 1 150px; padding: 12px 12px 12px 16px; gap: 10px; }
     .dash-stat .v { font-size: 17px; }
+    .docker-stats { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+
+    .pager { flex-wrap: wrap; justify-content: flex-start; }
+    .confirm-box { padding: 24px 18px 18px; }
+    .toast { max-width: calc(100vw - 28px); padding: 10px 16px; }
+
+    /* 弹窗近乎全屏：左右只留 10px，正文自己滚动 */
+    .modal-mask {
+        padding-top: max(10px, env(safe-area-inset-top));
+        padding-bottom: max(10px, env(safe-area-inset-bottom));
+        padding-left: max(10px, env(safe-area-inset-left));
+        padding-right: max(10px, env(safe-area-inset-right));
+    }
+    .modal { width: 100%; max-height: calc(100vh - 20px); max-height: calc(100dvh - 20px); border-radius: 16px; }
+    .modal-head { padding: 12px 14px; }
+    .modal-body { padding: 14px; }
+    .modal-close { padding: 6px 10px; }
+
+    /* 卡片化表格（.cards）：代理站点、导航管理这类主数据表列宽合计 1100px+，
+       手机上整表横滑难以定位，改为逐条卡片；字段名由 td 的 data-label 提供行首标签 */
+    .table-scroll.cards-wrap { overflow-x: visible; }
+    table.cards { min-width: 0 !important; table-layout: auto; }
+    table.cards thead { display: none; }
+    table.cards tr {
+        display: block;
+        padding: 8px 12px;
+        margin-bottom: 10px;
+        background: var(--panel-glass);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-input);
+    }
+    table.cards tr:last-child { margin-bottom: 0; }
+    table.cards tr:hover td { background: transparent; }
+    table.cards td {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        width: auto;
+        padding: 6px 0;
+        border-bottom: 1px dashed var(--border);
+    }
+    table.cards td:last-child { border-bottom: 0; }
+    table.cards td::before { content: attr(data-label); flex: 0 0 76px; color: var(--muted); font-size: 12px; line-height: 1.4; }
+    table.cards td.no-label::before { content: none; }
+    table.cards td.no-label { display: block; }
+    table.cards td.card-ops { display: flex; justify-content: flex-end; gap: 8px; }
+    /* 空单元格（如未上传图标的「图标」行）不占一行 */
+    table.cards td:empty { display: none; }
+
+    /* 抽屉展开时锁住背后内容滚动（滚动位置不丢失） */
+    .layout.nav-open .page-body { overflow: hidden; }
+}
+
+/* 手机小屏（<420）：进一步收紧排版，避免长按钮/长标题溢出 */
+@media (max-width: 419px) {
+    .topbar-actions .btn { padding: 5px 10px; }
+    .toolbar > .muted.small { flex-basis: 100%; }
+    .dash-stats { gap: 10px; }
+    .nav-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 16px 10px; }
+    .tile-icon { width: 64px; height: 64px; font-size: 32px; }
+    .img-grid { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+}
+
+/* 触屏设备（手机/平板）：hover 不可用，依赖悬停的操作入口必须常显；
+   输入框字号提到 16px，否则 iOS Safari 聚焦时会自动放大整页。 */
+@media (hover: none), (pointer: coarse) {
+    /* 导航磁贴的编辑/删除：从右上角浮层改为磁贴底部一行，不遮挡图标 */
+    .tile-actions { position: static; order: 3; opacity: 1; justify-content: center; margin-top: 2px; }
+    .tile-actions .btn { padding: 5px 10px; font-size: 12px; }
+    .nav-tile { padding-bottom: 12px; }
+
+    /* 触控目标放大到接近 40px（Apple HIG 建议 44px，表格内操作列取折中） */
+    .btn.icon { width: 40px; height: 40px; }
+    .btn.small { padding: 6px 12px; }
+    .switch { width: 44px; height: 26px; }
+    .switch .slider:before { width: 18px; height: 18px; left: 3px; top: 3px; }
+    .switch input:checked + .slider:before { transform: translateX(18px); }
+
+    /* iOS 聚焦缩放抑制：控件与自定义下拉触发器统一 16px */
+    :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]), select, textarea),
+    .select-view,
+    .login-card input,
+    .form-inline .field-inline input,
+    .log-jump input,
+    .wh-row textarea { font-size: 16px; }
+
+    /* 玻璃模糊在移动端会拖慢滚动：降低折射强度，保留层次感 */
+    .sidebar, .topbar, .panel, .login-card, .modal, .confirm-box, .toast,
+    .select-menu, .nav-tile { -webkit-backdrop-filter: blur(12px) saturate(140%); backdrop-filter: blur(12px) saturate(140%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .sidebar { transition: none; }
 }
 
 /* ============ 反向代理中心模块 ============ */

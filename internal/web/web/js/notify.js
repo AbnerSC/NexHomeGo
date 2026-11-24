@@ -46,14 +46,14 @@ async function renderNotify() {
       <div class="tip">集中维护通知渠道（<b>Webhook</b> / <b>邮件</b> / <b>钉钉机器人</b>），可用性监控故障恢复、登录锁定等事件将按启用渠道自动扇出推送。
         各模块事件通过统一接口投递，发送失败仅记录不影响主流程。</div>
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="notifyForm()">＋ 新增渠道</button></div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:560px">
         <thead><tr><th>名称</th><th>类型</th><th>状态</th><th style="width:230px">操作</th></tr></thead>
         <tbody id="notifyChTbody"><tr><td colspan="4" class="muted">加载中...</td></tr></tbody>
-      </table></div>
+      </table></div></div>
       <div class="panel">
         <h3 class="dash-panel-title">📬 发送记录 <span class="muted small" style="font-weight:400">（最近 10 条）</span></h3>
-        <table><thead><tr><th style="width:150px">时间</th><th style="width:150px">渠道</th><th style="width:200px">事件</th><th>标题</th><th>结果</th></tr></thead>
-          <tbody id="notifyLogTbody"><tr><td colspan="5" class="muted">加载中...</td></tr></tbody></table>
+        <div class="table-scroll"><table style="min-width:920px"><thead><tr><th style="width:150px">时间</th><th style="width:150px">渠道</th><th style="width:200px">事件</th><th>标题</th><th>结果</th></tr></thead>
+          <tbody id="notifyLogTbody"><tr><td colspan="5" class="muted">加载中...</td></tr></tbody></table></div>
       </div>`;
     await refreshNotifyRows();
 }

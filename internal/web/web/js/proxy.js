@@ -56,10 +56,10 @@ async function renderProxy() {
       <div class="panel">
         <div class="panel-title">SNI 证书清单
           <button class="btn small" style="float:right" onclick="pxReloadCerts()">⟳ 重载证书</button></div>
-        <table>
+        <div class="table-scroll"><table style="min-width:720px">
           <thead><tr><th style="width:200px">任务名称</th><th>证书域名 (SAN)</th><th style="width:120px">到期状态</th><th style="width:200px">notAfter</th></tr></thead>
           <tbody id="pxCertBody"><tr><td colspan="4" class="muted">加载中...</td></tr></tbody>
-        </table>
+        </table></div>
         <div class="small muted" id="pxCacheInfo" style="margin-top:8px"></div>
       </div>
 
@@ -79,18 +79,18 @@ async function renderProxy() {
         <button class="btn small" onclick="pxPurgeAll()">🧹 清空缓存</button>
         <button class="btn primary" onclick="pxForm()">＋ 新增站点</button>
       </div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll cards-wrap"><table class="cards" style="min-width:1220px">
         <thead><tr>
-          <th style="width:250px">站点</th>
-          <th>域名 / 路径</th>
-          <th style="width: 400px">后端 / 站点目录</th>
+          <th style="width:240px">站点</th>
+          <th style="width:270px">域名 / 路径</th>
+          <th style="width: 300px">后端 / 站点目录</th>
           <th style="width:80px">证书</th>
           <th style="width:130px">流量 / 错误</th>
           <th style="width:80px">启用</th>
           <th style="width:120px">操作</th>
         </tr></thead>
-        <tbody id="pxTbody"><tr><td colspan="7" class="muted">加载中...</td></tr></tbody>
-      </table></div>`;
+        <tbody id="pxTbody"><tr><td colspan="7" class="muted no-label">加载中...</td></tr></tbody>
+      </table></div></div>`;
 
     $('#proxySetForm').addEventListener('submit', pxSaveSettings);
     await refreshProxy();
@@ -177,23 +177,23 @@ function pxPaintRows() {
         const cert = s.cert_mode === 'TASK' ? '指定' : s.cert_mode === 'NONE' ? 'HTTP' : '自动';
         const isStatic = (s.mode || 'REVERSE') === 'STATIC';
         return `<tr>
-          <td>${esc(s.name)}${isStatic ? ' ' + badge('静态', 'info') : ''}</td>
-          <td class="small" style="word-break:break-all">${esc(s.domains)}
+          <td data-label="站点">${esc(s.name)}${isStatic ? ' ' + badge('静态', 'info') : ''}</td>
+          <td class="small" data-label="域名/路径" style="word-break:break-all">${esc(s.domains)}
             ${s.paths ? `<div class="muted">路径 ${esc(s.paths)}</div>` : ''}</td>
-          <td class="docker-mono small" style="word-break:break-all">${isStatic ? '📁 ' : ''}${esc(s.target)}</td>
-          <td class="small">${cert}${s.force_https ? '<div class="muted">强跳</div>' : ''}</td>
-          <td class="small">${m.active ? '活跃 ' + m.active + ' · ' : ''}${(m.qpm || 0) + ' 次/分'}
+          <td class="docker-mono small" data-label="后端" style="word-break:break-all">${isStatic ? '📁 ' : ''}${esc(s.target)}</td>
+          <td class="small" data-label="证书">${cert}${s.force_https ? '<div class="muted">强跳</div>' : ''}</td>
+          <td class="small" data-label="流量">${m.active ? '活跃 ' + m.active + ' · ' : ''}${(m.qpm || 0) + ' 次/分'}
             ${(m.errors || 0) > 0 ? `<div class="small" style="color:var(--err-fg)">${m.errors} 错误</div>` : ''}
             ${m.lastError ? `<div class="small muted px-err-snip" title="${esc(m.lastError)}">最近: ${esc(m.lastError)}</div>` : ''}</td>
-          <td><label class="switch"><input type="checkbox" ${s.enabled === 1 ? 'checked' : ''} onchange="pxToggle(${s.id}, this.checked)"><span class="slider"></span></label></td>
-          <td>
+          <td data-label="启用"><label class="switch"><input type="checkbox" ${s.enabled === 1 ? 'checked' : ''} onchange="pxToggle(${s.id}, this.checked)"><span class="slider"></span></label></td>
+          <td class="no-label card-ops">
             <button class="btn small" title="编辑" onclick="pxForm(${s.id})">✎</button>
             <button class="btn small danger" title="删除" onclick="pxDelete(${s.id}, ${jsq(s.name)})">🗑</button>
           </td>
         </tr>`;
     }).join('') || (pxSitesCache.length
-        ? '<tr><td colspan="7" class="muted">没有匹配当前筛选条件的站点。</td></tr>'
-        : '<tr><td colspan="7" class="muted">暂无代理站点，点击右上角「新增站点」添加。</td></tr>');
+        ? '<tr><td colspan="7" class="muted no-label">没有匹配当前筛选条件的站点。</td></tr>'
+        : '<tr><td colspan="7" class="muted no-label">暂无代理站点，点击右上角「新增站点」添加。</td></tr>');
 }
 
 /* ---------------- 服务设置 ---------------- */

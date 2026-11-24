@@ -77,10 +77,10 @@ async function renderLogs() {
         <div class="spacer"></div>
         <span class="muted small" id="logTotal"></span>
       </div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:760px">
         <thead><tr><th style="width:150px">时间</th><th style="width:110px">模块</th><th style="width:70px">级别</th><th>内容</th></tr></thead>
         <tbody id="logTbody"><tr><td colspan="4" class="muted">加载中...</td></tr></tbody>
-      </table>
+      </table></div>
       <div class="pager" id="logPager"></div></div>`;
     $('#logModuleSel').addEventListener('change', e => { logModule = e.target.value; logPage = 1; refreshLogsRows(); });
     $('#logLevelSel').addEventListener('change', e => { logLevel = e.target.value; logPage = 1; refreshLogsRows(); });

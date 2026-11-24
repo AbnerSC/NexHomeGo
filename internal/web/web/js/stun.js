@@ -754,6 +754,19 @@ function tfNiceMax(v) {
  * 注：SVG 呈现属性不支持 var()，颜色一律通过 style 内联声明，才能随浅/深主题切换。
  */
 function tfRenderChart(host, name, points, theme, tickFmt, tipFmt) {
+    if (!host) return;
+    // 弹窗宽度变化（手机旋转/缩放窗口）后按新宽度重绘，避免 SVG 被固定像素宽度裁切
+    if (!host._ro) {
+        host._ro = new ResizeObserver(() => {
+            const w = Math.round(host.clientWidth);
+            if (!host._args || w === host._lastW) return;
+            host._lastW = w;
+            tfRenderChart(host, host._args.name, host._args.points, host._args.theme, host._args.tickFmt, host._args.tipFmt);
+        });
+        host._ro.observe(host);
+    }
+    host._args = { name, points, theme, tickFmt, tipFmt };
+    host._lastW = Math.round(host.clientWidth || 0);
     const W = Math.max(host.clientWidth || 0, 240), H = 170;
     const P = { l: 46, r: 12, t: 14, b: 22 };
     const iw = W - P.l - P.r, ih = H - P.t - P.b;

@@ -71,8 +71,8 @@ function diagChart(history) {
         const y = i / 4 * H;
         gLines += `<line x1="0" y1="${y}" x2="${W}" y2="${y}" class="diag-grid"/>`;
     }
-    // X 轴时间刻度（最多 6 个，首尾贴边避免裁切）
-    const ticks = Math.min(6, n);
+    // X 轴时间刻度（最多 6 个，首尾贴边避免裁切）：窄屏减到 4 个，避免标签互相重叠
+    const ticks = Math.min(n, window.innerWidth < 640 ? 4 : 6);
     let xLabels = '';
     for (let k = 0; k < ticks; k++) {
         const idx = ticks > 1 ? Math.round(k * (n - 1) / (ticks - 1)) : 0;
@@ -142,14 +142,14 @@ function diagLive(s, rt) {
     return `
       <div class="panel">
         <h3 style="font-size:14px;margin-bottom:12px">当前实时内存</h3>
-        <table>
+        <div class="table-scroll"><table style="min-width:560px">
           ${diagBar('进程 RSS', rss, rss, fmtDiagMB(s.rss) + (s.rss < 0 ? '（非 Linux 不可读）' : '（进程总占用）'), '', true)}
           ${lim > 0 ? diagBar('容器上限', rss, lim, `${fmtDiagMB(s.rss)} / ${fmtDiagMB(lim)}`) : ''}
           ${diagBar('Go 堆', s.heap, rss, `${fmtDiagMB(s.heap)} / 已申请 ${fmtDiagMB(s.heapSys)} / ${(s.heapObj || 0).toLocaleString()} 个对象`, '', true)}
           ${diagBar('协程栈', s.stack, rss, fmtDiagMB(s.stack), '', true)}
           ${diagBar('运行时合计（Sys）', s.sys, rss, fmtDiagMB(s.sys), '', true)}
           <tr><th>协程 / GC</th><td></td><td class="diag-val">${s.thr || 0} 协程 · GC ${s.gc || 0} 次 / ${s.gcMs || 0} ms</td></tr>
-        </table>
+        </table></div>
         <div class="small muted" style="margin-top:8px">
           ${esc(rt.version || '')} · PID ${rt.pid || '-'} · 主机 ${esc(rt.hostname || '-')} · ${rt.numCpu || 0} CPU ·
           运行 ${upTxt} · /proc ${rt.proc ? '可用' : '不可用（非 Linux）'}

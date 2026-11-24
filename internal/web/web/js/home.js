@@ -183,13 +183,17 @@ async function renderNavManage() {
     const items = await api('GET', '/api/nav/items');
     let rows = items.map(it => `
         <tr draggable="true" data-id="${it.id}" class="drag-row">
-          <td style="cursor:move">⠿</td>
-          <td>${it.icon_url ? `<img class="nav-thumb" src="${esc(iconSrc(it.icon_url))}" onerror="this.replaceWith(document.createTextNode('🌍'))">` : ''}</td>
-          <td>${esc(it.name)}</td>
-          <td class="small muted">${esc(it.lan_url) || '-'}</td>
-          <td class="small muted">${esc(it.wan_url) || '-'}</td>
-          <td>${it.enabled === 1 ? badge('启用', 'ok') : badge('停用', 'gray')}</td>
-          <td>
+          <td class="no-label"><div style="display:flex;align-items:center;gap:6px">
+            <span style="cursor:move" title="拖动排序">⠿</span>
+            <button type="button" class="btn small icon nav-move-up" title="上移" onclick="navMove(${it.id},-1)">↑</button>
+            <button type="button" class="btn small icon nav-move-down" title="下移" onclick="navMove(${it.id},1)">↓</button>
+          </div></td>
+          <td data-label="图标">${it.icon_url ? `<img class="nav-thumb" src="${esc(iconSrc(it.icon_url))}" onerror="this.replaceWith(document.createTextNode('🌍'))">` : ''}</td>
+          <td data-label="名称">${esc(it.name)}</td>
+          <td class="small muted" data-label="内网">${esc(it.lan_url) || '-'}</td>
+          <td class="small muted" data-label="外网">${esc(it.wan_url) || '-'}</td>
+          <td data-label="状态">${it.enabled === 1 ? badge('启用', 'ok') : badge('停用', 'gray')}</td>
+          <td class="no-label card-ops">
             <button class="btn small" onclick="navForm(${it.id})">编辑</button>
             <button class="btn small danger" onclick="navDelete(${it.id})">删除</button>
           </td>
@@ -201,12 +205,12 @@ async function renderNavManage() {
         <button class="btn small" onclick="navBgForm()">🌄 背景设置</button>
         <button class="btn small" onclick="navImageManage()">🖼 图片管理</button>
         <div class="spacer"></div>
-        <span class="muted small">拖动行调整顺序，松开自动保存</span>
+        <span class="muted small">拖动行或点 ↑ ↓ 调整顺序，自动保存</span>
         <button class="btn primary small" onclick="navForm()">＋ 新增导航</button>
       </div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll cards-wrap"><table class="cards" style="min-width:960px">
         <thead><tr>
-            <th style="width: 60px"></th>
+            <th style="width: 110px">排序</th>
             <th style="width: 100px">图标</th>
             <th style="width: 200px">名称</th>
             <th>内网地址</th>
@@ -215,31 +219,69 @@ async function renderNavManage() {
             <th style="width: 160px">操作</th>
         </tr></thead>
         <tbody id="navTbody">${rows}</tbody>
-      </table></div>`;
+      </table></div></div>`;
     bindDragSort();
 }
 window.renderNavManage = renderNavManage;
 
-/** HTML5 拖拽排序 */
+/** 保存当前行顺序（拖拽松手与 ↑↓ 按钮共用） */
+async function saveNavOrder() {
+    const tbody = $('#navTbody');
+    if (!tbody) return;
+    const ids = [...tbody.querySelectorAll('.drag-row')].map(r => Number(r.dataset.id));
+    try {
+        await api('PUT', '/api/nav/reorder', { ids });
+        toast('排序已保存');
+    } catch (e) { toast(e.message, 'err'); }
+}
+
+/** 首行禁用上移、末行禁用下移（行被移动/拖拽后需重刷） */
+function paintNavMoveBtns() {
+    const tbody = $('#navTbody');
+    if (!tbody) return;
+    const rows = [...tbody.querySelectorAll('.drag-row')];
+    rows.forEach((r, i) => {
+        const up = r.querySelector('.nav-move-up'), dn = r.querySelector('.nav-move-down');
+        if (up) up.disabled = i === 0;
+        if (dn) dn.disabled = i === rows.length - 1;
+    });
+}
+
+/** 连点合并：触屏上连续点 ↑↓ 很常见，逐个发 PUT 会在并发返回乱序时把服务端顺序
+    写回成中间态；400ms 内的连续点击只保存最后一次，拖拽松手仍即时保存 */
+let navSaveTimer = null;
+function scheduleSaveNavOrder() {
+    clearTimeout(navSaveTimer);
+    navSaveTimer = setTimeout(saveNavOrder, 400);
+}
+
+/** ↑↓ 按钮排序：触屏不支持 HTML5 拖拽时的替代操作，交换位置后合并保存 */
+window.navMove = (id, dir) => {
+    const tbody = $('#navTbody');
+    if (!tbody) return;
+    const row = tbody.querySelector(`.drag-row[data-id="${id}"]`);
+    if (!row) return;
+    const sib = dir < 0 ? row.previousElementSibling : row.nextElementSibling;
+    if (!sib) return;
+    tbody.insertBefore(row, dir < 0 ? sib : sib.nextSibling);
+    paintNavMoveBtns();
+    scheduleSaveNavOrder();
+};
+
+/** HTML5 拖拽排序（桌面鼠标操作；触屏用上方 ↑↓ 按钮） */
 function bindDragSort() {
     const tbody = $('#navTbody');
     let dragRow = null;
     tbody.querySelectorAll('.drag-row').forEach(row => {
         row.addEventListener('dragstart', () => { dragRow = row; row.style.opacity = .4; });
-        row.addEventListener('dragend', () => { row.style.opacity = 1; });
+        row.addEventListener('dragend', () => { row.style.opacity = 1; paintNavMoveBtns(); });
         row.addEventListener('dragover', e => {
             e.preventDefault();
             if (row !== dragRow) tbody.insertBefore(dragRow, row);
         });
-        row.addEventListener('drop', saveOrder);
+        row.addEventListener('drop', saveNavOrder);
     });
-    async function saveOrder() {
-        const ids = [...tbody.querySelectorAll('.drag-row')].map(r => Number(r.dataset.id));
-        try {
-            await api('PUT', '/api/nav/reorder', { ids });
-            toast('排序已保存');
-        } catch (e) { toast(e.message, 'err'); }
-    }
+    paintNavMoveBtns();
 }
 
 /** 内网探测链接设置：浏览器探测该固定地址（如路由器）可达时判定当前处于内网 */

@@ -42,18 +42,18 @@ async function renderMonitor() {
         瞬时故障自动重试 3 次（单次超时最少 3 秒），且「异常→恢复」需连续多个周期成功才确认，避免链路抖动刷屏。
         目标不可用时向「通知中心」已启用渠道推送告警，恢复时可推送恢复通知。探测在独立线程执行且各任务错峰触发，不影响其他定时任务。</div>
       <div class="toolbar"><div class="spacer"></div><button class="btn primary" onclick="monForm()">＋ 新增监控任务</button></div>
-      <div class="panel"><table>
+      <div class="panel"><div class="table-scroll"><table style="min-width:1170px">
         <thead><tr>
-          <th style="width:300px">任务</th>
-          <th>目标</th>
-          <th style="width:150px">状态</th>
-          <th style="width:100px">延迟</th>
-          <th style="width:180px">最近探测</th>
-          <th style="width:130px">定时</th>
-          <th style="width:230px">操作</th>
+          <th style="width:240px">任务</th>
+          <th style="width:240px">目标</th>
+          <th style="width:130px">状态</th>
+          <th style="width:90px">延迟</th>
+          <th style="width:150px">最近探测</th>
+          <th style="width:110px">定时</th>
+          <th style="width:210px">操作</th>
         </tr></thead>
         <tbody id="monitorTbody"><tr><td colspan="7" class="muted">加载中...</td></tr></tbody>
-      </table></div>`;
+      </table></div></div>`;
     await refreshMonitorRows();
     setRefresh(refreshMonitorRows, 15000);
 }

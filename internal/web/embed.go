@@ -62,6 +62,8 @@ func contentType(file string) string {
 		return "application/javascript; charset=utf-8"
 	case strings.HasSuffix(f, ".json"):
 		return "application/json; charset=utf-8"
+	case strings.HasSuffix(f, ".webmanifest"):
+		return "application/manifest+json; charset=utf-8"
 	case strings.HasSuffix(f, ".png"):
 		return "image/png"
 	case strings.HasSuffix(f, ".jpg"), strings.HasSuffix(f, ".jpeg"):
